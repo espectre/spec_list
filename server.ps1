@@ -8,7 +8,7 @@ $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add("http://localhost:$Port/")
 $listener.Prefixes.Add("http://127.0.0.1:$Port/")
 $listener.Start()
-Write-Host "Shandian static server running at http://localhost:$Port  root=$root"
+Write-Host "Maple tasks static server running at http://localhost:$Port  root=$root"
 
 $mime = @{
   '.html' = 'text/html; charset=utf-8'

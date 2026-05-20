@@ -273,7 +273,7 @@ App.store = (() => {
       notes: [
         {
           id: App.utils.uid(),
-          title: '欢迎使用闪点',
+          title: '欢迎使用枫桦清单',
           content: '这是你的第一条笔记。\n\n你可以在这里随手记录想法、会议要点、灵感。\n\n左侧选中笔记，右侧编辑，自动保存。',
           pinned: true,
           createdAt: isoIn(-48),
