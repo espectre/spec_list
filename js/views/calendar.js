@@ -168,7 +168,7 @@ App.views.calendar = (() => {
     root.querySelectorAll('[data-task-id]').forEach((row) => {
       const id = row.dataset.taskId;
       row.querySelector('[data-action="toggle"]').addEventListener('change', () => App.store.toggleTask(id));
-      row.querySelector('[data-action="edit"]').addEventListener('click', () => App.views.schedule.openEditModal(id));
+      row.querySelector('[data-action="edit"]').addEventListener('click', () => App.detail.open(id));
     });
 
     root.querySelector('#cal-add')?.addEventListener('click', () => openAddModalForDay(selectedKey));
