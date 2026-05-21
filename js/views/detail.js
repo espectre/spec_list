@@ -121,7 +121,7 @@ App.detail = (() => {
           `)}
           ${disabledMetaRow('重复', '无')}
           ${disabledMetaRow('提醒', '无')}
-          ${disabledMetaRow('标签', '无')}
+          ${tagsRow(t, state)}
         </div>
 
         <!-- Subtasks -->
@@ -161,6 +161,28 @@ App.detail = (() => {
         }
       }
     }
+  }
+
+  function tagsRow(t, state) {
+    const esc = App.utils.escapeHtml;
+    const selected = new Set(t.tagIds || []);
+    const chips = state.tags.map((tg) => {
+      const on = selected.has(tg.id);
+      const style = on
+        ? `background:${tg.color};color:white;border-color:${tg.color}`
+        : `color:${tg.color};border-color:${tg.color}66`;
+      return `<button data-tag-toggle="${tg.id}" class="text-[11px] px-2 py-0.5 rounded-full border inline-flex items-center gap-1 transition hover:opacity-80" style="${style}">#${esc(tg.name)}</button>`;
+    }).join('');
+    return `
+      <div class="flex items-start gap-3 px-1 py-1.5">
+        <span class="text-slate-400 w-4 shrink-0 mt-0.5">${App.icons.tags(14)}</span>
+        <span class="text-xs text-slate-500 w-14 shrink-0 mt-1">标签</span>
+        <div class="flex-1 min-w-0 flex flex-wrap items-center gap-1.5">
+          ${chips || '<span class="text-xs text-slate-400">暂无标签</span>'}
+          <button id="d-tag-new" class="text-[11px] text-slate-400 hover:text-brand-600 inline-flex items-center gap-0.5 px-1 py-0.5">${App.icons.plus(12)} 新建</button>
+        </div>
+      </div>
+    `;
   }
 
   function metaRow(label, iconName, body) {
@@ -284,6 +306,29 @@ App.detail = (() => {
     });
     panel.querySelectorAll('[data-sub-delete]').forEach((b) => {
       b.addEventListener('click', () => App.store.deleteSubtask(t.id, b.dataset.subDelete));
+    });
+
+    // Tags
+    panel.querySelectorAll('[data-tag-toggle]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const tagId = b.dataset.tagToggle;
+        const cur = App.store.get().tasks.find((x) => x.id === t.id);
+        if (!cur) return;
+        const next = (cur.tagIds || []).includes(tagId)
+          ? cur.tagIds.filter((x) => x !== tagId)
+          : [...(cur.tagIds || []), tagId];
+        App.store.setTaskTags(t.id, next);
+      });
+    });
+    panel.querySelector('#d-tag-new')?.addEventListener('click', () => {
+      App.views.schedule.openNewTagModal((tg) => {
+        const cur = App.store.get().tasks.find((x) => x.id === t.id);
+        if (cur) {
+          const next = [...(cur.tagIds || [])];
+          if (!next.includes(tg.id)) next.push(tg.id);
+          App.store.setTaskTags(t.id, next);
+        }
+      });
     });
 
     // Add subtask

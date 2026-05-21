@@ -31,5 +31,7 @@ App.icons = (() => {
     flagFill: (s) => `<svg xmlns="http://www.w3.org/2000/svg" width="${s||16}" height="${s||16}" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M4 22V3h12l-1 4 1 4H6v11z"/></svg>`,
     tags:     (s) => wrap('<path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>', s),
     plus2:    (s) => wrap('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/><circle cx="12" cy="12" r="10"/>', s),
+    bell:     (s) => wrap('<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>', s),
+    arrowR:   (s) => wrap('<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>', s),
   };
 })();

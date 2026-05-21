@@ -9,12 +9,14 @@ window.App = window.App || {};
  *     tasks: Task[],
  *     notes: Note[],
  *     lists: List[],
+ *     tags:  Tag[],
  *     meta:  { seededAt, version }
  *   }
  *
  * Task: {
  *   id, title, detail,
  *   listId (string | null),  // null = no list / inbox
+ *   tagIds: string[],
  *   dueAt (ISO string | null),
  *   importance (0|1), urgency (0|1),   // 1 = high
  *   subtasks: SubTask[],
@@ -23,6 +25,7 @@ window.App = window.App || {};
  * }
  * SubTask: { id, title, completed, createdAt }
  * List: { id, name, color, order, createdAt }
+ * Tag:  { id, name, color, createdAt }
  * Note: { id, title, content, pinned, createdAt, updatedAt }
  */
 App.store = (() => {
@@ -39,11 +42,13 @@ App.store = (() => {
       parsed.tasks = parsed.tasks || [];
       parsed.notes = parsed.notes || [];
       parsed.lists = parsed.lists || [];
+      parsed.tags  = parsed.tags  || [];
       parsed.meta = parsed.meta || { version: 1 };
       // backfill on tasks loaded from older versions
       parsed.tasks.forEach((t) => {
         if (!('listId' in t)) t.listId = null;
         if (!Array.isArray(t.subtasks)) t.subtasks = [];
+        if (!Array.isArray(t.tagIds)) t.tagIds = [];
       });
       return parsed;
     } catch (e) {
@@ -87,6 +92,7 @@ App.store = (() => {
       dueAt: partial.dueAt || null,
       importance: partial.importance ? 1 : 0,
       urgency: partial.urgency ? 1 : 0,
+      tagIds: Array.isArray(partial.tagIds) ? partial.tagIds.slice() : [],
       subtasks: [],
       completed: false,
       completedAt: null,
@@ -227,6 +233,62 @@ App.store = (() => {
     return { list: removed, index: idx, movedTaskIds: movedIds };
   }
 
+  // ---------- Tags ----------
+  function addTag(partial = {}) {
+    const now = new Date().toISOString();
+    const tag = {
+      id: App.utils.uid(),
+      name: (partial.name || '').trim() || '新建标签',
+      color: partial.color || '#64748b',
+      createdAt: now,
+    };
+    state.tags.push(tag);
+    emit();
+    return tag;
+  }
+
+  function updateTag(id, patch) {
+    const tg = state.tags.find((x) => x.id === id);
+    if (!tg) return null;
+    Object.assign(tg, patch);
+    emit();
+    return tg;
+  }
+
+  function deleteTag(id) {
+    const idx = state.tags.findIndex((x) => x.id === id);
+    if (idx === -1) return null;
+    const [removed] = state.tags.splice(idx, 1);
+    const affectedTaskIds = [];
+    state.tasks.forEach((t) => {
+      if (Array.isArray(t.tagIds) && t.tagIds.includes(id)) {
+        affectedTaskIds.push(t.id);
+        t.tagIds = t.tagIds.filter((x) => x !== id);
+        t.updatedAt = new Date().toISOString();
+      }
+    });
+    emit();
+    return { tag: removed, index: idx, affectedTaskIds };
+  }
+
+  function restoreTag(snapshot) {
+    if (!snapshot || !snapshot.tag) return;
+    const at = Math.min(snapshot.index, state.tags.length);
+    state.tags.splice(at, 0, snapshot.tag);
+    (snapshot.affectedTaskIds || []).forEach((tid) => {
+      const t = state.tasks.find((x) => x.id === tid);
+      if (t && Array.isArray(t.tagIds) && !t.tagIds.includes(snapshot.tag.id)) {
+        t.tagIds.push(snapshot.tag.id);
+        t.updatedAt = new Date().toISOString();
+      }
+    });
+    emit();
+  }
+
+  function setTaskTags(taskId, tagIds) {
+    return updateTask(taskId, { tagIds: tagIds.slice() });
+  }
+
   function restoreList(snapshot) {
     if (!snapshot || !snapshot.list) return;
     const at = Math.min(snapshot.index, state.lists.length);
@@ -312,18 +374,23 @@ App.store = (() => {
     const life    = { id: App.utils.uid(), name: '生活', color: '#10b981', order: 1, createdAt: isoIn(-72) };
     const reading = { id: App.utils.uid(), name: '学习', color: '#f59e0b', order: 2, createdAt: isoIn(-72) };
 
+    const tagUrgent  = { id: App.utils.uid(), name: '紧急',     color: '#ef4444', createdAt: isoIn(-72) };
+    const tagPhone   = { id: App.utils.uid(), name: '电话',     color: '#0ea5e9', createdAt: isoIn(-72) };
+    const tagWaiting = { id: App.utils.uid(), name: '等回复',   color: '#a855f7', createdAt: isoIn(-72) };
+
     const data = {
       lists: [work, life, reading],
+      tags:  [tagUrgent, tagPhone, tagWaiting],
       tasks: [
         { id: App.utils.uid(), title: '准备项目周会汇报', detail: '梳理本周进展与下周计划', listId: work.id,    dueAt: todayAt(15, 30),     importance: 1, urgency: 1, subtasks: [
           { id: App.utils.uid(), title: '收集各小组进展',   completed: true,  createdAt: isoIn(-2) },
           { id: App.utils.uid(), title: '画下周里程碑图',   completed: false, createdAt: isoIn(-2) },
           { id: App.utils.uid(), title: '准备演示 demo',    completed: false, createdAt: isoIn(-2) },
         ], completed: false, completedAt: null,       createdAt: isoIn(-2),  updatedAt: isoIn(-2) },
-        { id: App.utils.uid(), title: '回复客户邮件',     detail: '',                     listId: work.id,    dueAt: todayAt(11, 0),      importance: 0, urgency: 1, completed: false, completedAt: null,       createdAt: isoIn(-3),  updatedAt: isoIn(-3) },
+        { id: App.utils.uid(), title: '回复客户邮件',     detail: '',                     listId: work.id,    tagIds: [tagUrgent.id, tagWaiting.id], dueAt: todayAt(11, 0),      importance: 0, urgency: 1, completed: false, completedAt: null,       createdAt: isoIn(-3),  updatedAt: isoIn(-3) },
         { id: App.utils.uid(), title: '阅读《深度工作》第三章', detail: '记录三条要点',    listId: reading.id, dueAt: dayOffset(2, 21),    importance: 1, urgency: 0, completed: false, completedAt: null,       createdAt: isoIn(-5),  updatedAt: isoIn(-5) },
         { id: App.utils.uid(), title: '清理桌面文件',     detail: '',                     listId: null,       dueAt: null,                importance: 0, urgency: 0, completed: false, completedAt: null,       createdAt: isoIn(-10), updatedAt: isoIn(-10) },
-        { id: App.utils.uid(), title: '体检预约',         detail: '上午空腹',              listId: life.id,    dueAt: dayOffset(5, 8, 30), importance: 1, urgency: 0, completed: false, completedAt: null,       createdAt: isoIn(-12), updatedAt: isoIn(-12) },
+        { id: App.utils.uid(), title: '体检预约',         detail: '上午空腹',              listId: life.id,    tagIds: [tagPhone.id], dueAt: dayOffset(5, 8, 30), importance: 1, urgency: 0, completed: false, completedAt: null,       createdAt: isoIn(-12), updatedAt: isoIn(-12) },
         { id: App.utils.uid(), title: '提交月度报销',     detail: '',                     listId: work.id,    dueAt: dayOffset(-1, 18),   importance: 0, urgency: 1, completed: true,  completedAt: isoIn(-20), createdAt: isoIn(-30), updatedAt: isoIn(-20) },
       ],
       notes: [
@@ -374,6 +441,11 @@ App.store = (() => {
     updateList,
     deleteList,
     restoreList,
+    addTag,
+    updateTag,
+    deleteTag,
+    restoreTag,
+    setTaskTags,
     addNote,
     updateNote,
     deleteNote,
