@@ -36,6 +36,7 @@
     if (!sub) return 'all';
     if (sub === 'inbox') return 'inbox';
     if (sub.startsWith('list/')) return 'list:' + sub.slice(5);
+    if (sub.startsWith('tag/'))  return 'tag:'  + sub.slice(4);
     return 'all';
   }
 
@@ -59,9 +60,18 @@
       els.iconNav.appendChild(a);
     });
 
-    // Reset link at the bottom
+    // Reset / changelog at the bottom
     const spacer = document.createElement('div'); spacer.className = 'flex-1';
     els.iconNav.appendChild(spacer);
+
+    const bell = document.createElement('button');
+    bell.id = 'icon-bell';
+    const unread = App.changelog?.hasUnread?.();
+    bell.className = `w-full px-1 py-2 flex flex-col items-center gap-0.5 transition text-[10px] relative ${unread ? 'text-white' : 'text-slate-500 hover:text-white'}`;
+    bell.innerHTML = `<span class="rounded-lg p-1.5 inline-flex ${unread ? 'unread-dot' : ''}">${App.icons.bell(16)}</span><span class="leading-tight">更新</span>`;
+    bell.addEventListener('click', () => App.changelog?.open?.());
+    els.iconNav.appendChild(bell);
+
     const reset = document.createElement('button');
     reset.id = 'icon-reset';
     reset.className = 'w-full px-1 py-2 flex flex-col items-center gap-0.5 text-slate-500 hover:text-white transition text-[10px]';
@@ -105,6 +115,14 @@
         esc(l.name), count, active);
     };
 
+    const tagRow = (tg) => {
+      const active = sub === 'tag:' + tg.id;
+      const count = state.tasks.filter((t) => !t.completed && Array.isArray(t.tagIds) && t.tagIds.includes(tg.id)).length;
+      return row('tag/' + tg.id,
+        `<span class="text-xs" style="color:${tg.color}">#</span>`,
+        esc(tg.name), count, active);
+    };
+
     els.groupNav.innerHTML = `
       <div class="px-5 py-4 border-b border-slate-100">
         <div class="text-base font-semibold text-slate-900">清单</div>
@@ -120,18 +138,27 @@
           <span class="w-4 inline-flex justify-center text-slate-400">${App.icons.plus(16)}</span>
           <span class="flex-1 text-left">添加清单</span>
         </button>
-      </div>
-      <div class="px-3 py-2 border-t border-slate-100">
-        <button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-slate-500 hover:bg-slate-50 transition" disabled>
-          <span class="w-4 inline-flex justify-center text-slate-400">${App.icons.tags(16)}</span>
-          <span class="flex-1 text-left">标签管理</span>
-          <span class="text-[10px] text-slate-300">v2</span>
+
+        <div class="mt-4 mb-1 px-5 text-[11px] text-slate-400 flex items-center justify-between">
+          <span>标签</span>
+        </div>
+        ${state.tags.length === 0
+          ? `<div class="px-5 py-1.5 text-xs text-slate-300">还没有标签</div>`
+          : state.tags.map(tagRow).join('')}
+        <button id="gn-new-tag" class="w-full mt-1 flex items-center gap-3 px-4 py-2.5 mx-2 rounded-lg text-sm text-slate-500 hover:bg-slate-50 transition">
+          <span class="w-4 inline-flex justify-center text-slate-400">${App.icons.plus(16)}</span>
+          <span class="flex-1 text-left">添加标签</span>
         </button>
       </div>
     `;
 
     els.groupNav.querySelector('#gn-new-list')?.addEventListener('click', () => {
       App.views.schedule?.openNewListModal?.();
+    });
+    els.groupNav.querySelector('#gn-new-tag')?.addEventListener('click', () => {
+      App.views.schedule?.openNewTagModal?.((tg) => {
+        location.hash = '#/schedule/tag/' + tg.id;
+      });
     });
   }
 

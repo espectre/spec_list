@@ -140,3 +140,27 @@ html, body { height: 100%; }
 @keyframes toast-out {
   to { opacity: 0; transform: translateY(8px); }
 }
+
+/* "Look at this" highlight pulse — used by changelog "查看" buttons */
+@keyframes feature-pulse {
+  0%   { box-shadow: 0 0 0 0   rgba(99,102,241,0.7); }
+  60%  { box-shadow: 0 0 0 10px rgba(99,102,241,0);  }
+  100% { box-shadow: 0 0 0 0   rgba(99,102,241,0);  }
+}
+.feature-highlight {
+  position: relative;
+  z-index: 10;
+  border-radius: 8px;
+  animation: feature-pulse 1.4s ease-out 2;
+}
+
+/* Red unread dot for bell */
+.unread-dot::after {
+  content: '';
+  position: absolute;
+  top: 6px; right: 6px;
+  width: 7px; height: 7px;
+  border-radius: 9999px;
+  background: #ef4444;
+  border: 2px solid #1e293b;
+}

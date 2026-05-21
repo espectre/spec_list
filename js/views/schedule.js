@@ -25,6 +25,7 @@ App.views.schedule = (() => {
     if (!sub) return 'all';
     if (sub === 'inbox') return 'inbox';
     if (sub.startsWith('list/')) return 'list:' + sub.slice(5);
+    if (sub.startsWith('tag/'))  return 'tag:'  + sub.slice(4);
     return 'all';
   }
 
@@ -32,6 +33,7 @@ App.views.schedule = (() => {
     if (g === 'all') return '';
     if (g === 'inbox') return 'inbox';
     if (g.startsWith('list:')) return 'list/' + g.slice(5);
+    if (g.startsWith('tag:'))  return 'tag/'  + g.slice(4);
     return '';
   }
 
@@ -45,6 +47,9 @@ App.views.schedule = (() => {
     if (g.startsWith('list:')) {
       const id = g.slice(5);
       if (!App.store.get().lists.some((l) => l.id === id)) g = 'all';
+    } else if (g.startsWith('tag:')) {
+      const id = g.slice(4);
+      if (!App.store.get().tags.some((tg) => tg.id === id)) g = 'all';
     }
     currentGroup = g;
     syncHashSilently();
@@ -61,17 +66,32 @@ App.views.schedule = (() => {
     return currentGroup.startsWith('list:') ? currentGroup.slice(5) : null;
   }
 
+  function groupTagId() {
+    return currentGroup.startsWith('tag:') ? currentGroup.slice(4) : null;
+  }
+
   function groupLabel(state) {
     if (currentGroup === 'all') return '全部分组';
     if (currentGroup === 'inbox') return '任务箱';
-    const l = state.lists.find((x) => x.id === groupListId());
-    return l?.name || '清单';
+    if (currentGroup.startsWith('list:')) {
+      const l = state.lists.find((x) => x.id === groupListId());
+      return l?.name || '清单';
+    }
+    if (currentGroup.startsWith('tag:')) {
+      const tg = state.tags.find((x) => x.id === groupTagId());
+      return tg ? `#${tg.name}` : '标签';
+    }
+    return '清单';
   }
 
   function groupColor(state) {
     if (currentGroup.startsWith('list:')) {
       const l = state.lists.find((x) => x.id === groupListId());
       return l?.color || null;
+    }
+    if (currentGroup.startsWith('tag:')) {
+      const tg = state.tags.find((x) => x.id === groupTagId());
+      return tg?.color || null;
     }
     return null;
   }
@@ -81,6 +101,10 @@ App.views.schedule = (() => {
     if (currentGroup === 'all') return true;
     if (currentGroup === 'inbox') return !t.listId;
     if (currentGroup.startsWith('list:')) return t.listId === groupListId();
+    if (currentGroup.startsWith('tag:')) {
+      const tid = groupTagId();
+      return Array.isArray(t.tagIds) && t.tagIds.includes(tid);
+    }
     return true;
   }
 
@@ -172,11 +196,24 @@ App.views.schedule = (() => {
   }
 
   // ---------- Task row ----------
-  function taskRow(t, listMap, showListBadge) {
+  function tagChips(t, tagMap, max = 3) {
+    if (!Array.isArray(t.tagIds) || t.tagIds.length === 0) return '';
+    const esc = App.utils.escapeHtml;
+    const items = t.tagIds.slice(0, max).map((id) => {
+      const tg = tagMap.get(id);
+      if (!tg) return '';
+      return `<span class="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded" style="background:${tg.color}1a;color:${tg.color}">#${esc(tg.name)}</span>`;
+    }).filter(Boolean).join('');
+    const more = t.tagIds.length > max ? `<span class="text-[10px] text-slate-400">+${t.tagIds.length - max}</span>` : '';
+    return items + more;
+  }
+
+  function taskRow(t, listMap, tagMap, showListBadge) {
     const esc = App.utils.escapeHtml;
     const list = t.listId ? listMap.get(t.listId) : null;
     const flag = flagOf(t);
     const flagHtml = `<button data-action="flag" class="text-slate-300 hover:opacity-80 transition shrink-0" title="${flag.label}" style="color:${flag.color}">${App.icons.flagFill(15)}</button>`;
+    const tags = tagChips(t, tagMap);
     return `
       <div class="group flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 transition border-b border-slate-100 last:border-0" data-task-id="${t.id}">
         <input type="checkbox" class="task-check shrink-0" ${t.completed ? 'checked' : ''} data-action="toggle">
@@ -184,6 +221,7 @@ App.views.schedule = (() => {
           <div class="flex items-center gap-2 flex-wrap">
             <div class="text-sm ${t.completed ? 'line-through text-slate-400' : 'text-slate-800'} truncate">${esc(t.title)}</div>
             ${showListBadge && list ? `<span class="inline-flex items-center gap-1 text-[10px] text-slate-400"><span class="w-1.5 h-1.5 rounded-full" style="background:${list.color}"></span>${esc(list.name)}</span>` : ''}
+            ${tags ? `<span class="inline-flex items-center gap-1">${tags}</span>` : ''}
           </div>
           ${t.detail ? `<div class="text-xs text-slate-400 mt-0.5 truncate">${esc(t.detail)}</div>` : ''}
         </div>
@@ -205,6 +243,10 @@ App.views.schedule = (() => {
     if (currentGroup.startsWith('list:')) {
       const l = state.lists.find((x) => x.id === groupListId());
       return ['📋', `清单「${esc(l?.name || '')}」还没有任务`];
+    }
+    if (currentGroup.startsWith('tag:')) {
+      const tg = state.tags.find((x) => x.id === groupTagId());
+      return ['🏷', `标签「${esc(tg?.name || '')}」下还没有任务`];
     }
     return ['✨', '所有任务都做完了'];
   }
@@ -238,6 +280,7 @@ App.views.schedule = (() => {
   function render(root) {
     const state = App.store.get();
     const listMap = new Map(state.lists.map((l) => [l.id, l]));
+    const tagMap = new Map(state.tags.map((tg) => [tg.id, tg]));
     const active = sortTasks(activeTasks(state.tasks));
     const done = completedTasks(state.tasks);
     const showListBadge = currentGroup === 'all';
@@ -272,7 +315,7 @@ App.views.schedule = (() => {
                  <div class="text-3xl mb-2">${emoji}</div>
                  ${emptyMsg}
                </div>`
-            : active.map((t) => taskRow(t, listMap, showListBadge)).join('')}
+            : active.map((t) => taskRow(t, listMap, tagMap, showListBadge)).join('')}
         </div>
 
         <!-- Completed section -->
@@ -284,7 +327,7 @@ App.views.schedule = (() => {
           </button>
           ${showCompleted ? `
             <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
-              ${done.map((t) => taskRow(t, listMap, showListBadge)).join('')}
+              ${done.map((t) => taskRow(t, listMap, tagMap, showListBadge)).join('')}
             </div>
           ` : ''}
         ` : ''}
@@ -317,11 +360,17 @@ App.views.schedule = (() => {
             <button id="rename-list" class="text-xs px-2 py-1 text-slate-500 hover:text-slate-800 rounded-md hover:bg-slate-100 inline-flex items-center gap-1">${App.icons.edit(14)} 重命名</button>
             <button id="delete-list" class="text-xs px-2 py-1 text-slate-500 hover:text-red-600 rounded-md hover:bg-red-50 inline-flex items-center gap-1">${App.icons.trash(14)} 删除</button>
           ` : ''}
+          ${currentGroup.startsWith('tag:') ? `
+            <button id="rename-tag" class="text-xs px-2 py-1 text-slate-500 hover:text-slate-800 rounded-md hover:bg-slate-100 inline-flex items-center gap-1">${App.icons.edit(14)} 重命名</button>
+            <button id="delete-tag" class="text-xs px-2 py-1 text-slate-500 hover:text-red-600 rounded-md hover:bg-red-50 inline-flex items-center gap-1">${App.icons.trash(14)} 删除</button>
+          ` : ''}
         </div>
       </div>
     `;
     headerEl.querySelector('#rename-list')?.addEventListener('click', openRenameModal);
     headerEl.querySelector('#delete-list')?.addEventListener('click', confirmDeleteList);
+    headerEl.querySelector('#rename-tag')?.addEventListener('click', openRenameTagModal);
+    headerEl.querySelector('#delete-tag')?.addEventListener('click', confirmDeleteTag);
     headerEl.querySelector('#scope-picker')?.addEventListener('click', openGroupSheet);
   }
 
@@ -345,9 +394,15 @@ App.views.schedule = (() => {
         `<span class="w-2.5 h-2.5 rounded-full inline-block" style="background:${l.color}"></span>`,
         esc(l.name), c, currentGroup === 'list:' + l.id);
     }).join('');
+    const tagsHtml = state.tags.map((tg) => {
+      const c = state.tasks.filter((t) => !t.completed && Array.isArray(t.tagIds) && t.tagIds.includes(tg.id)).length;
+      return row('tag:' + tg.id,
+        `<span class="text-sm" style="color:${tg.color}">#</span>`,
+        esc(tg.name), c, currentGroup === 'tag:' + tg.id);
+    }).join('');
 
     const panel = App.modal.open(`
-      <div class="p-3">
+      <div class="p-3 max-h-[80vh] overflow-y-auto">
         <div class="flex items-center justify-between px-2 pt-1 pb-2">
           <h3 class="text-sm font-semibold text-slate-900">选择清单</h3>
           <button data-modal-close class="text-slate-400 hover:text-slate-600">${App.icons.close(18)}</button>
@@ -358,10 +413,18 @@ App.views.schedule = (() => {
           <div class="mt-3 mb-1 px-3 text-[11px] text-slate-400 uppercase tracking-wider">我的清单</div>
           ${listsHtml}
         ` : ''}
-        <button id="sheet-new-list" class="w-full mt-2 px-4 py-3 text-left text-sm text-slate-500 hover:bg-slate-50 rounded-lg inline-flex items-center gap-3">
-          <span class="w-5 inline-flex justify-center text-slate-400">${App.icons.plus(16)}</span>
-          新建清单
-        </button>
+        ${state.tags.length > 0 ? `
+          <div class="mt-3 mb-1 px-3 text-[11px] text-slate-400 uppercase tracking-wider">标签</div>
+          ${tagsHtml}
+        ` : ''}
+        <div class="grid grid-cols-2 gap-2 mt-3">
+          <button id="sheet-new-list" class="px-3 py-2.5 text-sm text-slate-500 hover:bg-slate-50 rounded-lg inline-flex items-center justify-center gap-2">
+            ${App.icons.plus(14)} 清单
+          </button>
+          <button id="sheet-new-tag" class="px-3 py-2.5 text-sm text-slate-500 hover:bg-slate-50 rounded-lg inline-flex items-center justify-center gap-2">
+            ${App.icons.plus(14)} 标签
+          </button>
+        </div>
       </div>
     `);
     panel.querySelectorAll('[data-modal-close]').forEach((b) => b.addEventListener('click', App.modal.close));
@@ -369,6 +432,10 @@ App.views.schedule = (() => {
       b.addEventListener('click', () => { App.modal.close(); setGroup(b.dataset.pick); });
     });
     panel.querySelector('#sheet-new-list')?.addEventListener('click', () => { App.modal.close(); openNewListModal(); });
+    panel.querySelector('#sheet-new-tag')?.addEventListener('click', () => {
+      App.modal.close();
+      openNewTagModal((tg) => setGroup('tag:' + tg.id));
+    });
   }
 
   // ---------- Bind handlers ----------
@@ -616,6 +683,110 @@ App.views.schedule = (() => {
     });
   }
 
+  function openRenameTagModal() {
+    const id = groupTagId();
+    const tg = App.store.get().tags.find((x) => x.id === id);
+    if (!tg) return;
+    const esc = App.utils.escapeHtml;
+    const panel = App.modal.open(`
+      <div class="p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="font-semibold text-slate-900">编辑标签</h3>
+          <button data-modal-close class="text-slate-400 hover:text-slate-600">${App.icons.close(18)}</button>
+        </div>
+        <input id="rt-name" value="${esc(tg.name)}" maxlength="20"
+               class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-brand-400 mb-3">
+        <div class="text-xs text-slate-500 mb-1.5">颜色</div>
+        <div class="flex items-center gap-2 flex-wrap">
+          ${['#ef4444','#f59e0b','#10b981','#0ea5e9','#6366f1','#a855f7','#ec4899','#64748b']
+            .map((c) => `<button type="button" data-color="${c}" class="w-7 h-7 rounded-full border-2 ${c===tg.color?'border-slate-800':'border-transparent'}" style="background:${c}"></button>`).join('')}
+        </div>
+        <div class="flex items-center justify-end gap-2 mt-5">
+          <button data-modal-close class="px-3 py-2 text-sm text-slate-500 hover:text-slate-800">取消</button>
+          <button id="rt-save" class="px-4 py-2 text-sm bg-brand-600 hover:bg-brand-700 text-white rounded-lg">保存</button>
+        </div>
+      </div>
+    `);
+    let pickedColor = tg.color;
+    panel.querySelectorAll('[data-color]').forEach((b) => {
+      b.addEventListener('click', () => {
+        pickedColor = b.dataset.color;
+        panel.querySelectorAll('[data-color]').forEach((x) => x.classList.toggle('border-slate-800', x === b));
+        panel.querySelectorAll('[data-color]').forEach((x) => { if (x !== b) x.classList.add('border-transparent'); });
+      });
+    });
+    panel.querySelectorAll('[data-modal-close]').forEach((b) => b.addEventListener('click', App.modal.close));
+    panel.querySelector('#rt-save').addEventListener('click', () => {
+      const name = panel.querySelector('#rt-name').value.trim() || tg.name;
+      App.store.updateTag(tg.id, { name, color: pickedColor });
+      App.modal.close();
+    });
+  }
+
+  function confirmDeleteTag() {
+    const id = groupTagId();
+    const tg = App.store.get().tags.find((x) => x.id === id);
+    if (!tg) return;
+    const affected = App.store.get().tasks.filter((t) => Array.isArray(t.tagIds) && t.tagIds.includes(tg.id)).length;
+    const msg = affected > 0
+      ? `删除标签「${tg.name}」？${affected} 个任务将失去该标签（任务本身不会被删）。`
+      : `删除标签「${tg.name}」？`;
+    if (!confirm(msg)) return;
+    const snapshot = App.store.deleteTag(tg.id);
+    setGroup('all');
+    if (snapshot) {
+      App.toast.show({
+        message: `已删除标签「${snapshot.tag.name}」`,
+        actionLabel: '撤销',
+        onAction: () => {
+          App.store.restoreTag(snapshot);
+          setGroup('tag:' + snapshot.tag.id);
+        },
+      });
+    }
+  }
+
+  function openNewTagModal(onCreated) {
+    const panel = App.modal.open(`
+      <div class="p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="font-semibold text-slate-900">新建标签</h3>
+          <button data-modal-close class="text-slate-400 hover:text-slate-600">${App.icons.close(18)}</button>
+        </div>
+        <input id="nt-name" placeholder="标签名（如：电话、等回复、外出）" maxlength="20"
+               class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-brand-400 mb-3">
+        <div class="text-xs text-slate-500 mb-1.5">颜色</div>
+        <div class="flex items-center gap-2 flex-wrap">
+          ${['#ef4444','#f59e0b','#10b981','#0ea5e9','#6366f1','#a855f7','#ec4899','#64748b']
+            .map((c, i) => `<button type="button" data-color="${c}" class="w-7 h-7 rounded-full border-2 ${i===0?'border-slate-800':'border-transparent'}" style="background:${c}"></button>`).join('')}
+        </div>
+        <div class="flex items-center justify-end gap-2 mt-5">
+          <button data-modal-close class="px-3 py-2 text-sm text-slate-500 hover:text-slate-800">取消</button>
+          <button id="nt-save" class="px-4 py-2 text-sm bg-brand-600 hover:bg-brand-700 text-white rounded-lg">创建</button>
+        </div>
+      </div>
+    `);
+    let pickedColor = '#ef4444';
+    panel.querySelectorAll('[data-color]').forEach((b) => {
+      b.addEventListener('click', () => {
+        pickedColor = b.dataset.color;
+        panel.querySelectorAll('[data-color]').forEach((x) => x.classList.toggle('border-slate-800', x === b));
+        panel.querySelectorAll('[data-color]').forEach((x) => { if (x !== b) x.classList.add('border-transparent'); });
+      });
+    });
+    panel.querySelectorAll('[data-modal-close]').forEach((b) => b.addEventListener('click', App.modal.close));
+    const save = () => {
+      const name = panel.querySelector('#nt-name').value.trim();
+      if (!name) { App.modal.close(); return; }
+      const tg = App.store.addTag({ name, color: pickedColor });
+      App.modal.close();
+      onCreated && onCreated(tg);
+    };
+    panel.querySelector('#nt-save').addEventListener('click', save);
+    panel.querySelector('#nt-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
+    setTimeout(() => panel.querySelector('#nt-name').focus(), 30);
+  }
+
   function confirmDeleteList() {
     const id = groupListId();
     const l = App.store.get().lists.find((x) => x.id === id);
@@ -651,6 +822,9 @@ App.views.schedule = (() => {
     if (currentGroup.startsWith('list:')) {
       const id = currentGroup.slice(5);
       if (!App.store.get().lists.some((l) => l.id === id)) currentGroup = 'all';
+    } else if (currentGroup.startsWith('tag:')) {
+      const id = currentGroup.slice(4);
+      if (!App.store.get().tags.some((tg) => tg.id === id)) currentGroup = 'all';
     }
     syncHashSilently();
     redraw();
@@ -658,5 +832,5 @@ App.views.schedule = (() => {
     return () => { if (unsubscribe) unsubscribe(); };
   }
 
-  return { mount, openEditModal, setGroup, openNewListModal };
+  return { mount, openEditModal, setGroup, openNewListModal, openNewTagModal };
 })();
