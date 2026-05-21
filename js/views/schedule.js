@@ -2,90 +2,119 @@ window.App = window.App || {};
 App.views = App.views || {};
 
 App.views.schedule = (() => {
-  const SYS_SCOPES = [
+  // Time window filter — orthogonal to group selection.
+  const TIME_WINDOWS = [
+    { id: 'all',      label: '全部' },
     { id: 'today',    label: '今天' },
-    { id: 'inbox',    label: '收件箱' },
-    { id: 'upcoming', label: '即将到来' },
-    { id: 'done',     label: '已完成' },
+    { id: 'tomorrow', label: '明天' },
+    { id: 'week',     label: '近一周' },
   ];
 
-  let currentScope = 'today';
+  // Group / scope — chosen via group nav (desktop) or mobile sheet.
+  // Values: 'all' | 'inbox' | 'list:<id>'
+  let currentGroup = 'all';
+  let currentWindow = 'all';
   let query = '';
+  let showCompleted = false; // folded by default
   let unsubscribe = null;
   let _root, _header;
 
-  function scopeFromHash() {
+  function groupFromHash() {
     const m = location.hash.match(/^#\/schedule(?:\/(.+))?$/);
     const sub = m && m[1];
-    if (!sub) return 'today';
+    if (!sub) return 'all';
+    if (sub === 'inbox') return 'inbox';
     if (sub.startsWith('list/')) return 'list:' + sub.slice(5);
-    if (['today','inbox','upcoming','done'].includes(sub)) return sub;
-    return 'today';
+    return 'all';
   }
 
-  function scopeToHashSub(scope) {
-    if (scope.startsWith('list:')) return 'list/' + scope.slice(5);
-    if (scope === 'today') return '';
-    return scope;
+  function groupToHashSub(g) {
+    if (g === 'all') return '';
+    if (g === 'inbox') return 'inbox';
+    if (g.startsWith('list:')) return 'list/' + g.slice(5);
+    return '';
   }
 
   function syncHashSilently() {
-    const sub = scopeToHashSub(currentScope);
+    const sub = groupToHashSub(currentGroup);
     const target = sub ? `#/schedule/${sub}` : '#/schedule';
-    if (location.hash !== target) {
-      history.replaceState({}, '', target);
-    }
+    if (location.hash !== target) history.replaceState({}, '', target);
   }
 
-  function setScope(scope) {
-    // also validates that list still exists
-    if (scope.startsWith('list:')) {
-      const id = scope.slice(5);
-      const exists = App.store.get().lists.some((l) => l.id === id);
-      if (!exists) scope = 'today';
+  function setGroup(g) {
+    if (g.startsWith('list:')) {
+      const id = g.slice(5);
+      if (!App.store.get().lists.some((l) => l.id === id)) g = 'all';
     }
-    currentScope = scope;
+    currentGroup = g;
     syncHashSilently();
     redraw();
     App.refreshNav?.();
   }
 
-  function scopeListId() {
-    return currentScope.startsWith('list:') ? currentScope.slice(5) : null;
+  function setTimeWindow(w) {
+    currentWindow = w;
+    redraw();
   }
 
-  function filterTasks(tasks) {
+  function groupListId() {
+    return currentGroup.startsWith('list:') ? currentGroup.slice(5) : null;
+  }
+
+  function groupLabel(state) {
+    if (currentGroup === 'all') return '全部分组';
+    if (currentGroup === 'inbox') return '任务箱';
+    const l = state.lists.find((x) => x.id === groupListId());
+    return l?.name || '清单';
+  }
+
+  function groupColor(state) {
+    if (currentGroup.startsWith('list:')) {
+      const l = state.lists.find((x) => x.id === groupListId());
+      return l?.color || null;
+    }
+    return null;
+  }
+
+  // ---------- Filtering ----------
+  function matchesGroup(t) {
+    if (currentGroup === 'all') return true;
+    if (currentGroup === 'inbox') return !t.listId;
+    if (currentGroup.startsWith('list:')) return t.listId === groupListId();
+    return true;
+  }
+
+  function matchesWindow(t) {
     const u = App.utils;
-    let list;
-    if (currentScope.startsWith('list:')) {
-      const lid = scopeListId();
-      list = tasks.filter((t) => !t.completed && t.listId === lid);
-    } else {
-      switch (currentScope) {
-        case 'today':
-          list = tasks.filter((t) => !t.completed && t.dueAt && u.isSameDay(t.dueAt, new Date()));
-          break;
-        case 'inbox':
-          list = tasks.filter((t) => !t.completed && !t.listId && !t.dueAt);
-          break;
-        case 'upcoming':
-          list = tasks.filter((t) => !t.completed && t.dueAt && new Date(t.dueAt) > new Date() && !u.isSameDay(t.dueAt, new Date()));
-          break;
-        case 'done':
-          list = tasks.filter((t) => t.completed);
-          break;
-        default:
-          list = tasks;
-      }
+    if (currentWindow === 'all') return true;
+    if (!t.dueAt) return false;
+    const d = new Date(t.dueAt);
+    const today0 = u.startOfDay(new Date());
+    if (currentWindow === 'today') return u.isSameDay(d, new Date());
+    if (currentWindow === 'tomorrow') {
+      const tom = new Date(today0); tom.setDate(tom.getDate() + 1);
+      return u.isSameDay(d, tom);
     }
+    if (currentWindow === 'week') {
+      const day7 = new Date(today0); day7.setDate(day7.getDate() + 7);
+      return d >= today0 && d < day7;
+    }
+    return true;
+  }
+
+  function matchesQuery(t) {
     const q = query.trim().toLowerCase();
-    if (q) {
-      list = list.filter((t) =>
-        (t.title || '').toLowerCase().includes(q) ||
-        (t.detail || '').toLowerCase().includes(q)
-      );
-    }
-    return list;
+    if (!q) return true;
+    return (t.title || '').toLowerCase().includes(q) ||
+           (t.detail || '').toLowerCase().includes(q);
+  }
+
+  function activeTasks(tasks) {
+    return tasks.filter((t) => !t.completed && matchesGroup(t) && matchesWindow(t) && matchesQuery(t));
+  }
+
+  function completedTasks(tasks) {
+    return tasks.filter((t) => t.completed && matchesGroup(t) && matchesWindow(t) && matchesQuery(t));
   }
 
   function sortTasks(list) {
@@ -100,236 +129,304 @@ App.views.schedule = (() => {
     });
   }
 
-  function quadrantDot(t) {
-    if (t.importance && t.urgency)   return '<span class="w-1.5 h-1.5 rounded-full bg-q1 inline-block"></span>';
-    if (t.importance && !t.urgency)  return '<span class="w-1.5 h-1.5 rounded-full bg-q2 inline-block"></span>';
-    if (!t.importance && t.urgency)  return '<span class="w-1.5 h-1.5 rounded-full bg-q3 inline-block"></span>';
-    return '';
+  // ---------- Priority flag (4-state cycle via importance × urgency) ----------
+  const FLAG_STATES = [
+    { imp: 0, urg: 0, color: '#cbd5e1', label: '无' },        // gray
+    { imp: 1, urg: 1, color: '#ef4444', label: '重要紧急' },   // red
+    { imp: 1, urg: 0, color: '#f59e0b', label: '重要' },       // orange
+    { imp: 0, urg: 1, color: '#3b82f6', label: '紧急' },       // blue
+  ];
+
+  function currentFlagIndex(t) {
+    return FLAG_STATES.findIndex((s) => s.imp === t.importance && s.urg === t.urgency);
   }
 
-  function listBadge(list) {
-    if (!list) return '';
-    return `<span class="inline-flex items-center gap-1 text-[11px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
-              <span class="w-1.5 h-1.5 rounded-full" style="background:${list.color}"></span>${App.utils.escapeHtml(list.name)}
-            </span>`;
+  function flagOf(t) {
+    const idx = Math.max(0, currentFlagIndex(t));
+    return FLAG_STATES[idx];
   }
 
+  function cycleFlag(t) {
+    const cur = currentFlagIndex(t);
+    const next = FLAG_STATES[(cur + 1) % FLAG_STATES.length];
+    App.store.updateTask(t.id, { importance: next.imp, urgency: next.urg });
+  }
+
+  // ---------- Date chip ----------
   function dueChip(t) {
     if (!t.dueAt) return '';
     const u = App.utils;
+    const d = new Date(t.dueAt);
+    const today = new Date();
+    const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
     const overdue = !t.completed && u.isOverdue(t.dueAt);
-    const cls = overdue ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-500';
-    return `<span class="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded ${cls}">${u.formatDateTime(t.dueAt)}</span>`;
+    const isToday = u.isSameDay(d, today);
+    const isTomorrow = u.isSameDay(d, tomorrow);
+    const hasTime = !(d.getHours() === 0 && d.getMinutes() === 0);
+    let label;
+    if (isToday) label = hasTime ? u.formatTime(t.dueAt) : '今天';
+    else if (isTomorrow) label = '明天';
+    else label = `${d.getMonth() + 1 < 10 ? '0' : ''}${d.getMonth() + 1}-${d.getDate() < 10 ? '0' : ''}${d.getDate()}`;
+    const cls = overdue ? 'text-red-500' : 'text-slate-400';
+    return `<span class="inline-flex items-center gap-1 text-xs ${cls}">${App.icons.clock(13)}<span class="tabular-nums">${label}</span></span>`;
   }
 
+  // ---------- Task row ----------
   function taskRow(t, listMap, showListBadge) {
     const esc = App.utils.escapeHtml;
     const list = t.listId ? listMap.get(t.listId) : null;
+    const flag = flagOf(t);
+    const flagHtml = `<button data-action="flag" class="text-slate-300 hover:opacity-80 transition shrink-0" title="${flag.label}" style="color:${flag.color}">${App.icons.flagFill(15)}</button>`;
     return `
-      <div class="group flex items-start gap-3 px-4 py-3 hover:bg-slate-50 transition border-b border-slate-100 last:border-0" data-task-id="${t.id}">
-        <input type="checkbox" class="task-check mt-1" ${t.completed ? 'checked' : ''} data-action="toggle">
+      <div class="group flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 transition border-b border-slate-100 last:border-0" data-task-id="${t.id}">
+        <input type="checkbox" class="task-check shrink-0" ${t.completed ? 'checked' : ''} data-action="toggle">
         <div class="flex-1 min-w-0 cursor-pointer" data-action="edit">
           <div class="flex items-center gap-2 flex-wrap">
-            ${quadrantDot(t)}
             <div class="text-sm ${t.completed ? 'line-through text-slate-400' : 'text-slate-800'} truncate">${esc(t.title)}</div>
+            ${showListBadge && list ? `<span class="inline-flex items-center gap-1 text-[10px] text-slate-400"><span class="w-1.5 h-1.5 rounded-full" style="background:${list.color}"></span>${esc(list.name)}</span>` : ''}
           </div>
-          ${t.detail ? `<div class="text-xs text-slate-400 mt-0.5 line-clamp-2">${esc(t.detail)}</div>` : ''}
-          <div class="flex items-center gap-2 mt-1 flex-wrap">
-            ${dueChip(t)}
-            ${showListBadge && list ? listBadge(list) : ''}
-          </div>
+          ${t.detail ? `<div class="text-xs text-slate-400 mt-0.5 truncate">${esc(t.detail)}</div>` : ''}
         </div>
-        <button class="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 transition px-2" data-action="delete" title="删除">
-          ${App.icons.trash(16)}
-        </button>
+        <button data-action="subtask" class="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-brand-600 transition shrink-0" title="子任务（即将上线）">${App.icons.plus(15)}</button>
+        ${flagHtml}
+        <div class="shrink-0 w-16 text-right">${dueChip(t)}</div>
       </div>
     `;
   }
 
-  function chipBar(state) {
-    const esc = App.utils.escapeHtml;
-    // pre-compute counts via temp scope mutation
-    const prev = currentScope;
-    const counts = {};
-    for (const s of SYS_SCOPES) { currentScope = s.id; counts[s.id] = filterTasks(state.tasks).length; }
-    for (const l of state.lists) { currentScope = 'list:' + l.id; counts['list:' + l.id] = filterTasks(state.tasks).length; }
-    currentScope = prev;
-
-    const renderChip = (scopeId, label, dot) => {
-      const active = scopeId === currentScope;
-      const c = counts[scopeId] || 0;
-      return `
-        <button data-scope="${scopeId}" class="relative shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg transition
-          ${active ? 'bg-brand-50 text-brand-700 font-medium' : 'text-slate-500 hover:text-slate-800'}">
-          ${dot || ''}
-          ${label}
-          ${c > 0 ? `<span class="text-[11px] ${active ? 'text-brand-500' : 'text-slate-400'}">${c}</span>` : ''}
-        </button>
-      `;
-    };
-
-    const sys = SYS_SCOPES.map((s) => renderChip(s.id, s.label)).join('');
-    const lists = state.lists.map((l) =>
-      renderChip('list:' + l.id, esc(l.name), `<span class="w-2 h-2 rounded-full shrink-0" style="background:${l.color}"></span>`)
-    ).join('');
-
-    return `
-      <div class="flex items-center gap-1.5 mb-4 overflow-x-auto pb-1">
-        ${sys}
-        ${state.lists.length > 0 ? '<span class="shrink-0 w-px h-5 bg-slate-200 mx-1"></span>' : ''}
-        ${lists}
-        <button id="new-list" class="shrink-0 inline-flex items-center gap-1 px-2.5 py-2 text-xs text-slate-400 hover:text-brand-600 hover:bg-slate-50 rounded-lg whitespace-nowrap" title="新建清单">
-          ${App.icons.plus(14)} 新建清单
-        </button>
-      </div>
-    `;
-  }
-
+  // ---------- Render ----------
   function emptyState(state) {
     const esc = App.utils.escapeHtml;
-    if (query) return `🔍|没有匹配"${esc(query)}"的任务`;
-    if (currentScope.startsWith('list:')) {
-      const l = state.lists.find((x) => x.id === scopeListId());
-      return `📋|清单「${esc(l?.name || '')}」还没有任务`;
+    if (query) return ['🔍', `没有匹配"${esc(query)}"的任务`];
+    if (currentWindow === 'today')    return ['✨', '今天没有任务，享受空闲'];
+    if (currentWindow === 'tomorrow') return ['🌤', '明天还没安排'];
+    if (currentWindow === 'week')     return ['📅', '近一周没有任务'];
+    if (currentGroup === 'inbox')     return ['📥', '任务箱为空，添加点想法吧'];
+    if (currentGroup.startsWith('list:')) {
+      const l = state.lists.find((x) => x.id === groupListId());
+      return ['📋', `清单「${esc(l?.name || '')}」还没有任务`];
     }
-    if (currentScope === 'today')    return '✨|今天没有任务，享受空闲';
-    if (currentScope === 'inbox')    return '📥|收件箱为空，添加点想法吧';
-    if (currentScope === 'upcoming') return '📅|没有即将到来的任务';
-    if (currentScope === 'done')     return '🎉|尚未完成任何任务';
-    return '|';
+    return ['✨', '所有任务都做完了'];
+  }
+
+  function timeTabRow() {
+    return `
+      <div class="flex items-center gap-1 mb-3 border-b border-slate-200">
+        ${TIME_WINDOWS.map((w) => {
+          const active = w.id === currentWindow;
+          return `
+            <button data-window="${w.id}"
+                    class="relative px-3 md:px-4 py-2.5 text-sm whitespace-nowrap transition
+                           ${active ? 'text-brand-700 font-medium' : 'text-slate-500 hover:text-slate-800'}">
+              ${w.label}
+              ${active ? '<span class="absolute left-2 right-2 -bottom-px h-0.5 bg-brand-600 rounded-full"></span>' : ''}
+            </button>
+          `;
+        }).join('')}
+        <div class="flex-1"></div>
+        <div class="hidden md:flex items-center gap-2 pr-2">
+          <div class="relative">
+            <input id="task-search" type="text" value="${App.utils.escapeHtml(query)}" placeholder="搜索"
+                   class="w-40 lg:w-48 pl-8 pr-2 py-1.5 text-sm bg-slate-100 rounded-lg outline-none focus:bg-white focus:ring-2 focus:ring-brand-100">
+            <span class="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400">${App.icons.search(14)}</span>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   function render(root) {
     const state = App.store.get();
     const listMap = new Map(state.lists.map((l) => [l.id, l]));
-    const list = sortTasks(filterTasks(state.tasks));
+    const active = sortTasks(activeTasks(state.tasks));
+    const done = completedTasks(state.tasks);
+    const showListBadge = currentGroup === 'all';
+    const groupName = groupLabel(state);
     const esc = App.utils.escapeHtml;
-    const showListBadge = !currentScope.startsWith('list:'); // hide badge if already filtering by list
-    const [emoji, emptyMsg] = emptyState(state).split('|');
+    const [emoji, emptyMsg] = emptyState(state);
 
     root.innerHTML = `
-      <div class="max-w-3xl mx-auto">
-        <div class="flex items-center gap-2 mb-3 bg-white rounded-xl border border-slate-200 px-3 py-2 focus-within:border-brand-400 focus-within:ring-2 focus-within:ring-brand-100 transition">
-          <span class="text-slate-300 shrink-0">${App.icons.search(16)}</span>
-          <input id="task-search" type="text" value="${esc(query)}" placeholder="搜索任务..." class="flex-1 outline-none text-sm bg-transparent">
-          ${query ? `<button id="task-search-clear" class="text-slate-300 hover:text-slate-500" aria-label="清除">${App.icons.close(14)}</button>` : ''}
+      <div class="max-w-4xl mx-auto pt-1">
+        ${timeTabRow()}
+
+        <!-- Mobile search -->
+        <div class="md:hidden flex items-center gap-2 mb-3 bg-white rounded-xl border border-slate-200 px-3 py-2">
+          <span class="text-slate-300 shrink-0">${App.icons.search(15)}</span>
+          <input id="task-search-mobile" type="text" value="${esc(query)}" placeholder="搜索任务..." class="flex-1 outline-none text-sm bg-transparent">
         </div>
 
-        ${chipBar(state)}
-
-        <form id="quick-add" class="flex flex-wrap items-center gap-2 bg-white rounded-xl border border-slate-200 px-3 py-2.5 mb-4 shadow-sm focus-within:border-brand-400 focus-within:ring-2 focus-within:ring-brand-100 transition">
+        <!-- Quick add -->
+        <form id="quick-add" class="flex items-center gap-2 bg-white rounded-xl border border-slate-200 px-3 py-2.5 mb-3 shadow-sm focus-within:border-brand-400 focus-within:ring-2 focus-within:ring-brand-100 transition">
           <span class="text-slate-300 shrink-0">${App.icons.plus(18)}</span>
-          <input id="quick-add-title" type="text" placeholder="添加任务，回车保存" class="flex-1 min-w-0 basis-32 outline-none text-sm bg-transparent" maxlength="120">
+          <input id="quick-add-title" type="text" placeholder="添加任务到「${esc(groupName)}」" class="flex-1 min-w-0 outline-none text-sm bg-transparent" maxlength="120">
           <input id="quick-add-date" type="date" class="shrink-0 w-32 text-xs text-slate-500 outline-none bg-transparent" title="截止日期">
-          <button type="button" data-toggle="importance" class="shrink-0 text-xs px-2 py-1 rounded text-slate-400 hover:text-q2 hover:bg-slate-50" title="重要">重</button>
-          <button type="button" data-toggle="urgency"    class="shrink-0 text-xs px-2 py-1 rounded text-slate-400 hover:text-q1 hover:bg-slate-50" title="紧急">急</button>
+          <button id="quick-submit" type="submit" class="shrink-0 w-7 h-7 rounded-full bg-brand-600 hover:bg-brand-700 text-white inline-flex items-center justify-center" title="保存（回车）">
+            ${App.icons.chevronR(16)}
+          </button>
         </form>
 
+        <!-- Active tasks -->
         <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
-          ${list.length === 0
-            ? `<div class="text-center text-slate-400 text-sm py-16">
+          ${active.length === 0
+            ? `<div class="text-center text-slate-400 text-sm py-12">
                  <div class="text-3xl mb-2">${emoji}</div>
                  ${emptyMsg}
                </div>`
-            : list.map((t) => taskRow(t, listMap, showListBadge)).join('')}
+            : active.map((t) => taskRow(t, listMap, showListBadge)).join('')}
         </div>
+
+        <!-- Completed section -->
+        ${done.length > 0 ? `
+          <button id="toggle-done" class="mt-4 mb-2 flex items-center gap-2 text-sm text-slate-500 hover:text-slate-800">
+            <span class="${showCompleted ? 'rotate-90' : ''} transition-transform inline-block">${App.icons.chevronR(14)}</span>
+            已完成
+            <span class="text-xs text-slate-400 tabular-nums">${done.length}</span>
+          </button>
+          ${showCompleted ? `
+            <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
+              ${done.map((t) => taskRow(t, listMap, showListBadge)).join('')}
+            </div>
+          ` : ''}
+        ` : ''}
       </div>
     `;
   }
 
+  // ---------- Header ----------
   function renderHeader(headerEl) {
     const state = App.store.get();
     const esc = App.utils.escapeHtml;
-    let title = '日程';
-    let subtitle = `${App.utils.formatDateLabel(new Date().toISOString())} · ${new Date().toLocaleDateString('zh-CN', { weekday: 'long' })}`;
-    let actions = '';
-    if (currentScope.startsWith('list:')) {
-      const l = state.lists.find((x) => x.id === scopeListId());
-      if (l) {
-        title = `<span class="inline-flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full" style="background:${l.color}"></span>${esc(l.name)}</span>`;
-        const taskCount = state.tasks.filter((t) => t.listId === l.id && !t.completed).length;
-        subtitle = `${taskCount} 个未完成任务`;
-        actions = `
-          <button id="rename-list" class="text-xs px-2 py-1 text-slate-500 hover:text-slate-800 rounded-md hover:bg-slate-100 inline-flex items-center gap-1">${App.icons.edit(14)} 重命名</button>
-          <button id="delete-list" class="text-xs px-2 py-1 text-slate-500 hover:text-red-600 rounded-md hover:bg-red-50 inline-flex items-center gap-1">${App.icons.trash(14)} 删除</button>
-        `;
-      }
-    }
+    const name = groupLabel(state);
+    const color = groupColor(state);
+    const dot = color ? `<span class="w-2.5 h-2.5 rounded-full inline-block" style="background:${color}"></span>` : '';
+    const subtitle = currentWindow === 'all'
+      ? `${state.tasks.filter((t) => !t.completed && matchesGroup(t)).length} 个未完成`
+      : (TIME_WINDOWS.find((w) => w.id === currentWindow)?.label || '');
+
     headerEl.innerHTML = `
-      <div class="max-w-3xl mx-auto flex items-end justify-between gap-3">
-        <div class="min-w-0">
-          <h1 class="text-xl md:text-2xl font-semibold text-slate-900 truncate">${title}</h1>
-          <p class="text-xs text-slate-400 mt-0.5">${subtitle}</p>
+      <div class="max-w-4xl mx-auto flex items-end justify-between gap-3">
+        <div class="min-w-0 flex items-end gap-2">
+          <button id="scope-picker" class="md:hidden text-slate-500 hover:bg-slate-100 rounded-lg p-1 -ml-1" title="切换清单">${App.icons.chevronD ? App.icons.chevronD(20) : App.icons.chevronR(20)}</button>
+          <div class="min-w-0">
+            <h1 class="text-xl md:text-2xl font-semibold text-slate-900 truncate inline-flex items-center gap-2">${dot}${esc(name)}</h1>
+            <p class="text-xs text-slate-400 mt-0.5">${esc(subtitle)}</p>
+          </div>
         </div>
-        <div class="flex items-center gap-1 shrink-0">${actions}</div>
+        <div class="flex items-center gap-1 shrink-0">
+          ${currentGroup.startsWith('list:') ? `
+            <button id="rename-list" class="text-xs px-2 py-1 text-slate-500 hover:text-slate-800 rounded-md hover:bg-slate-100 inline-flex items-center gap-1">${App.icons.edit(14)} 重命名</button>
+            <button id="delete-list" class="text-xs px-2 py-1 text-slate-500 hover:text-red-600 rounded-md hover:bg-red-50 inline-flex items-center gap-1">${App.icons.trash(14)} 删除</button>
+          ` : ''}
+        </div>
       </div>
     `;
     headerEl.querySelector('#rename-list')?.addEventListener('click', openRenameModal);
     headerEl.querySelector('#delete-list')?.addEventListener('click', confirmDeleteList);
+    headerEl.querySelector('#scope-picker')?.addEventListener('click', openGroupSheet);
   }
 
+  // ---------- Mobile group sheet ----------
+  function openGroupSheet() {
+    const state = App.store.get();
+    const esc = App.utils.escapeHtml;
+    const allCount   = state.tasks.filter((t) => !t.completed).length;
+    const inboxCount = state.tasks.filter((t) => !t.completed && !t.listId).length;
+    const row = (id, leading, label, count, active) => `
+      <button data-pick="${id}" class="w-full flex items-center gap-3 px-4 py-3 text-left rounded-lg
+        ${active ? 'bg-brand-50 text-brand-700 font-medium' : 'text-slate-700 hover:bg-slate-50'}">
+        <span class="w-5 inline-flex justify-center ${active ? 'text-brand-600' : 'text-slate-400'}">${leading}</span>
+        <span class="flex-1">${label}</span>
+        ${count > 0 ? `<span class="text-xs text-slate-400 tabular-nums">${count}</span>` : ''}
+      </button>
+    `;
+    const listsHtml = state.lists.map((l) => {
+      const c = state.tasks.filter((t) => t.listId === l.id && !t.completed).length;
+      return row('list:' + l.id,
+        `<span class="w-2.5 h-2.5 rounded-full inline-block" style="background:${l.color}"></span>`,
+        esc(l.name), c, currentGroup === 'list:' + l.id);
+    }).join('');
+
+    const panel = App.modal.open(`
+      <div class="p-3">
+        <div class="flex items-center justify-between px-2 pt-1 pb-2">
+          <h3 class="text-sm font-semibold text-slate-900">选择清单</h3>
+          <button data-modal-close class="text-slate-400 hover:text-slate-600">${App.icons.close(18)}</button>
+        </div>
+        ${row('all',   App.icons.list(16),  '全部分组', allCount,   currentGroup === 'all')}
+        ${row('inbox', App.icons.inbox(16), '任务箱',   inboxCount, currentGroup === 'inbox')}
+        ${state.lists.length > 0 ? `
+          <div class="mt-3 mb-1 px-3 text-[11px] text-slate-400 uppercase tracking-wider">我的清单</div>
+          ${listsHtml}
+        ` : ''}
+        <button id="sheet-new-list" class="w-full mt-2 px-4 py-3 text-left text-sm text-slate-500 hover:bg-slate-50 rounded-lg inline-flex items-center gap-3">
+          <span class="w-5 inline-flex justify-center text-slate-400">${App.icons.plus(16)}</span>
+          新建清单
+        </button>
+      </div>
+    `);
+    panel.querySelectorAll('[data-modal-close]').forEach((b) => b.addEventListener('click', App.modal.close));
+    panel.querySelectorAll('[data-pick]').forEach((b) => {
+      b.addEventListener('click', () => { App.modal.close(); setGroup(b.dataset.pick); });
+    });
+    panel.querySelector('#sheet-new-list')?.addEventListener('click', () => { App.modal.close(); openNewListModal(); });
+  }
+
+  // ---------- Bind handlers ----------
   function bind(root) {
-    // search
-    const searchEl = root.querySelector('#task-search');
-    if (searchEl) {
-      searchEl.addEventListener('input', () => {
-        query = searchEl.value;
-        const pos = searchEl.selectionStart;
+    // Time window tabs
+    root.querySelectorAll('[data-window]').forEach((btn) => {
+      btn.addEventListener('click', () => setTimeWindow(btn.dataset.window));
+    });
+
+    // Desktop search
+    const search = root.querySelector('#task-search');
+    if (search) {
+      search.addEventListener('input', () => {
+        query = search.value;
+        const pos = search.selectionStart;
         redraw();
         const next = _root.querySelector('#task-search');
         if (next) { next.focus(); next.setSelectionRange(pos, pos); }
       });
     }
-    root.querySelector('#task-search-clear')?.addEventListener('click', () => {
-      query = '';
+    // Mobile search
+    const searchM = root.querySelector('#task-search-mobile');
+    if (searchM) {
+      searchM.addEventListener('input', () => {
+        query = searchM.value;
+        const pos = searchM.selectionStart;
+        redraw();
+        const next = _root.querySelector('#task-search-mobile');
+        if (next) { next.focus(); next.setSelectionRange(pos, pos); }
+      });
+    }
+
+    // Toggle completed section
+    root.querySelector('#toggle-done')?.addEventListener('click', () => {
+      showCompleted = !showCompleted;
       redraw();
-      _root.querySelector('#task-search')?.focus();
     });
 
-    // scope chips
-    root.querySelectorAll('[data-scope]').forEach((btn) => {
-      btn.addEventListener('click', () => setScope(btn.dataset.scope));
-    });
-
-    // new list
-    root.querySelector('#new-list')?.addEventListener('click', openNewListModal);
-
-    // task interactions
+    // Task interactions
     root.querySelectorAll('[data-task-id]').forEach((row) => {
       const id = row.dataset.taskId;
       row.querySelector('[data-action="toggle"]').addEventListener('change', () => App.store.toggleTask(id));
       row.querySelector('[data-action="edit"]').addEventListener('click', () => openEditModal(id));
-      row.querySelector('[data-action="delete"]').addEventListener('click', (e) => {
+      row.querySelector('[data-action="flag"]')?.addEventListener('click', (e) => {
         e.stopPropagation();
-        const snapshot = App.store.deleteTask(id);
-        if (snapshot) {
-          App.toast.show({
-            message: `已删除「${snapshot.task.title}」`,
-            actionLabel: '撤销',
-            onAction: () => App.store.restoreTask(snapshot),
-          });
-        }
+        const t = App.store.get().tasks.find((x) => x.id === id);
+        if (t) cycleFlag(t);
+      });
+      row.querySelector('[data-action="subtask"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        App.toast.show({ message: '子任务即将上线', duration: 1800 });
       });
     });
 
-    // quick add
+    // Quick add
     const form = root.querySelector('#quick-add');
     const titleEl = root.querySelector('#quick-add-title');
     const dateEl = root.querySelector('#quick-add-date');
-    let flags = { importance: 0, urgency: 0 };
-
-    root.querySelectorAll('[data-toggle]').forEach((b) => {
-      b.addEventListener('click', () => {
-        const k = b.dataset.toggle;
-        flags[k] = flags[k] ? 0 : 1;
-        if (flags[k]) {
-          if (k === 'importance') b.classList.add('bg-blue-50', 'text-q2'); else b.classList.add('bg-red-50', 'text-q1');
-        } else {
-          b.classList.remove('bg-blue-50', 'text-q2', 'bg-red-50', 'text-q1');
-        }
-      });
-    });
-
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       const title = titleEl.value.trim();
@@ -339,21 +436,24 @@ App.views.schedule = (() => {
         const d = App.utils.fromDateKey(dateEl.value);
         d.setHours(9, 0, 0, 0);
         dueAt = d.toISOString();
-      } else if (currentScope === 'today') {
+      } else if (currentWindow === 'today') {
         const d = new Date();
         d.setHours(9, 0, 0, 0);
         dueAt = d.toISOString();
+      } else if (currentWindow === 'tomorrow') {
+        const d = new Date(); d.setDate(d.getDate() + 1);
+        d.setHours(9, 0, 0, 0);
+        dueAt = d.toISOString();
       }
-      const listId = scopeListId();
-      App.store.addTask({ title, dueAt, listId, importance: flags.importance, urgency: flags.urgency });
+      const listId = groupListId();
+      App.store.addTask({ title, dueAt, listId, importance: 0, urgency: 0 });
       titleEl.value = '';
       dateEl.value = '';
-      flags = { importance: 0, urgency: 0 };
-      root.querySelectorAll('[data-toggle]').forEach((b) => b.classList.remove('bg-blue-50', 'text-q2', 'bg-red-50', 'text-q1'));
       titleEl.focus();
     });
   }
 
+  // ---------- Edit modal ----------
   function openEditModal(id) {
     const t = App.store.get().tasks.find((x) => x.id === id);
     if (!t) return;
@@ -362,7 +462,7 @@ App.views.schedule = (() => {
     const dueTime = t.dueAt ? App.utils.formatTime(t.dueAt) : '';
     const esc = App.utils.escapeHtml;
     const listOptions = `
-      <option value="" ${!t.listId ? 'selected' : ''}>无（收件箱）</option>
+      <option value="" ${!t.listId ? 'selected' : ''}>任务箱（无清单）</option>
       ${lists.map((l) => `<option value="${l.id}" ${t.listId === l.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}
     `;
     const panel = App.modal.open(`
@@ -382,13 +482,15 @@ App.views.schedule = (() => {
             <input id="m-date" type="date" value="${dueDate}" class="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-brand-400">
             <input id="m-time" type="time" value="${dueTime}" class="w-28 border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-brand-400">
           </div>
-          <div class="flex items-center gap-3 text-sm">
-            <label class="inline-flex items-center gap-1.5 cursor-pointer">
-              <input id="m-imp" type="checkbox" ${t.importance ? 'checked' : ''} class="rounded"> 重要
-            </label>
-            <label class="inline-flex items-center gap-1.5 cursor-pointer">
-              <input id="m-urg" type="checkbox" ${t.urgency ? 'checked' : ''} class="rounded"> 紧急
-            </label>
+          <div>
+            <label class="text-xs text-slate-500 mb-1.5 block">优先级</label>
+            <div id="m-flags" class="flex items-center gap-2">
+              ${FLAG_STATES.map((s, i) => `
+                <button type="button" data-flag-idx="${i}" class="w-9 h-9 rounded-lg border-2 ${s.imp === t.importance && s.urg === t.urgency ? 'border-slate-700' : 'border-transparent'} inline-flex items-center justify-center hover:bg-slate-50" title="${s.label}">
+                  <span style="color:${s.color}">${App.icons.flagFill(16)}</span>
+                </button>
+              `).join('')}
+            </div>
           </div>
         </div>
         <div class="flex items-center justify-end gap-2 mt-5">
@@ -397,6 +499,15 @@ App.views.schedule = (() => {
         </div>
       </div>
     `);
+    let picked = { imp: t.importance, urg: t.urgency };
+    panel.querySelectorAll('[data-flag-idx]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const i = Number(b.dataset.flagIdx);
+        picked = { imp: FLAG_STATES[i].imp, urg: FLAG_STATES[i].urg };
+        panel.querySelectorAll('[data-flag-idx]').forEach((x) => x.classList.toggle('border-slate-700', x === b));
+        panel.querySelectorAll('[data-flag-idx]').forEach((x) => { if (x !== b) x.classList.add('border-transparent'); });
+      });
+    });
     panel.querySelectorAll('[data-modal-close]').forEach((b) => b.addEventListener('click', App.modal.close));
     panel.querySelector('#m-save').addEventListener('click', () => {
       const title = panel.querySelector('#m-title').value.trim() || '未命名任务';
@@ -416,18 +527,15 @@ App.views.schedule = (() => {
         dueAt = d.toISOString();
       }
       App.store.updateTask(t.id, {
-        title,
-        detail,
-        listId: listIdVal,
-        dueAt,
-        importance: panel.querySelector('#m-imp').checked ? 1 : 0,
-        urgency: panel.querySelector('#m-urg').checked ? 1 : 0,
+        title, detail, listId: listIdVal, dueAt,
+        importance: picked.imp, urgency: picked.urg,
       });
       App.modal.close();
     });
     setTimeout(() => panel.querySelector('#m-title').focus(), 30);
   }
 
+  // ---------- List CRUD modals ----------
   function openNewListModal() {
     const panel = App.modal.open(`
       <div class="p-5">
@@ -462,7 +570,7 @@ App.views.schedule = (() => {
       if (!name) { App.modal.close(); return; }
       const l = App.store.addList({ name, color: pickedColor });
       App.modal.close();
-      setScope('list:' + l.id);
+      setGroup('list:' + l.id);
     };
     panel.querySelector('#nl-save').addEventListener('click', save);
     panel.querySelector('#nl-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
@@ -470,7 +578,7 @@ App.views.schedule = (() => {
   }
 
   function openRenameModal() {
-    const id = scopeListId();
+    const id = groupListId();
     const l = App.store.get().lists.find((x) => x.id === id);
     if (!l) return;
     const panel = App.modal.open(`
@@ -509,23 +617,23 @@ App.views.schedule = (() => {
   }
 
   function confirmDeleteList() {
-    const id = scopeListId();
+    const id = groupListId();
     const l = App.store.get().lists.find((x) => x.id === id);
     if (!l) return;
     const taskCount = App.store.get().tasks.filter((t) => t.listId === l.id).length;
     const msg = taskCount > 0
-      ? `删除清单「${l.name}」？其下 ${taskCount} 个任务将移动到收件箱。`
+      ? `删除清单「${l.name}」？其下 ${taskCount} 个任务将移动到任务箱。`
       : `删除清单「${l.name}」？`;
     if (!confirm(msg)) return;
     const snapshot = App.store.deleteList(l.id);
-    setScope('today');
+    setGroup('all');
     if (snapshot) {
       App.toast.show({
         message: `已删除清单「${snapshot.list.name}」`,
         actionLabel: '撤销',
         onAction: () => {
           App.store.restoreList(snapshot);
-          setScope('list:' + snapshot.list.id);
+          setGroup('list:' + snapshot.list.id);
         },
       });
     }
@@ -539,11 +647,10 @@ App.views.schedule = (() => {
 
   function mount(root, header) {
     _root = root; _header = header;
-    currentScope = scopeFromHash();
-    // validate list exists
-    if (currentScope.startsWith('list:')) {
-      const id = currentScope.slice(5);
-      if (!App.store.get().lists.some((l) => l.id === id)) currentScope = 'today';
+    currentGroup = groupFromHash();
+    if (currentGroup.startsWith('list:')) {
+      const id = currentGroup.slice(5);
+      if (!App.store.get().lists.some((l) => l.id === id)) currentGroup = 'all';
     }
     syncHashSilently();
     redraw();
@@ -551,5 +658,5 @@ App.views.schedule = (() => {
     return () => { if (unsubscribe) unsubscribe(); };
   }
 
-  return { mount, openEditModal, setScope, openNewListModal };
+  return { mount, openEditModal, setGroup, openNewListModal };
 })();
