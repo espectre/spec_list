@@ -73,7 +73,7 @@ App.views.matrix = (() => {
     root.querySelectorAll('[data-task-id]').forEach((card) => {
       const id = card.dataset.taskId;
       card.querySelector('[data-action="toggle"]').addEventListener('change', () => App.store.toggleTask(id));
-      card.querySelector('[data-action="edit"]').addEventListener('click', () => App.views.schedule.openEditModal(id));
+      card.querySelector('[data-action="edit"]').addEventListener('click', () => App.detail.open(id));
 
       // DnD
       card.addEventListener('dragstart', (e) => {

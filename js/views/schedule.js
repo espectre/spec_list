@@ -411,7 +411,7 @@ App.views.schedule = (() => {
     root.querySelectorAll('[data-task-id]').forEach((row) => {
       const id = row.dataset.taskId;
       row.querySelector('[data-action="toggle"]').addEventListener('change', () => App.store.toggleTask(id));
-      row.querySelector('[data-action="edit"]').addEventListener('click', () => openEditModal(id));
+      row.querySelector('[data-action="edit"]').addEventListener('click', () => App.detail.open(id));
       row.querySelector('[data-action="flag"]')?.addEventListener('click', (e) => {
         e.stopPropagation();
         const t = App.store.get().tasks.find((x) => x.id === id);

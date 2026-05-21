@@ -17,9 +17,11 @@ window.App = window.App || {};
  *   listId (string | null),  // null = no list / inbox
  *   dueAt (ISO string | null),
  *   importance (0|1), urgency (0|1),   // 1 = high
+ *   subtasks: SubTask[],
  *   completed, completedAt,
  *   createdAt, updatedAt,
  * }
+ * SubTask: { id, title, completed, createdAt }
  * List: { id, name, color, order, createdAt }
  * Note: { id, title, content, pinned, createdAt, updatedAt }
  */
@@ -38,8 +40,11 @@ App.store = (() => {
       parsed.notes = parsed.notes || [];
       parsed.lists = parsed.lists || [];
       parsed.meta = parsed.meta || { version: 1 };
-      // backfill listId on tasks loaded from older versions
-      parsed.tasks.forEach((t) => { if (!('listId' in t)) t.listId = null; });
+      // backfill on tasks loaded from older versions
+      parsed.tasks.forEach((t) => {
+        if (!('listId' in t)) t.listId = null;
+        if (!Array.isArray(t.subtasks)) t.subtasks = [];
+      });
       return parsed;
     } catch (e) {
       console.warn('store: load failed, reseeding', e);
@@ -82,6 +87,7 @@ App.store = (() => {
       dueAt: partial.dueAt || null,
       importance: partial.importance ? 1 : 0,
       urgency: partial.urgency ? 1 : 0,
+      subtasks: [],
       completed: false,
       completedAt: null,
       createdAt: now,
@@ -126,6 +132,52 @@ App.store = (() => {
 
   function setQuadrant(id, importance, urgency) {
     return updateTask(id, { importance: importance ? 1 : 0, urgency: urgency ? 1 : 0 });
+  }
+
+  // ---------- Subtasks ----------
+  function addSubtask(taskId, title) {
+    const t = state.tasks.find((x) => x.id === taskId);
+    if (!t) return null;
+    if (!Array.isArray(t.subtasks)) t.subtasks = [];
+    const sub = {
+      id: App.utils.uid(),
+      title: (title || '').trim() || '未命名子任务',
+      completed: false,
+      createdAt: new Date().toISOString(),
+    };
+    t.subtasks.push(sub);
+    t.updatedAt = sub.createdAt;
+    emit();
+    return sub;
+  }
+
+  function updateSubtask(taskId, subId, patch) {
+    const t = state.tasks.find((x) => x.id === taskId);
+    if (!t) return null;
+    const s = t.subtasks.find((x) => x.id === subId);
+    if (!s) return null;
+    Object.assign(s, patch);
+    t.updatedAt = new Date().toISOString();
+    emit();
+    return s;
+  }
+
+  function toggleSubtask(taskId, subId) {
+    const t = state.tasks.find((x) => x.id === taskId);
+    if (!t) return;
+    const s = t.subtasks.find((x) => x.id === subId);
+    if (!s) return;
+    s.completed = !s.completed;
+    t.updatedAt = new Date().toISOString();
+    emit();
+  }
+
+  function deleteSubtask(taskId, subId) {
+    const t = state.tasks.find((x) => x.id === taskId);
+    if (!t) return;
+    t.subtasks = t.subtasks.filter((x) => x.id !== subId);
+    t.updatedAt = new Date().toISOString();
+    emit();
   }
 
   function quadrantOf(t) {
@@ -263,7 +315,11 @@ App.store = (() => {
     const data = {
       lists: [work, life, reading],
       tasks: [
-        { id: App.utils.uid(), title: '准备项目周会汇报', detail: '梳理本周进展与下周计划', listId: work.id,    dueAt: todayAt(15, 30),     importance: 1, urgency: 1, completed: false, completedAt: null,       createdAt: isoIn(-2),  updatedAt: isoIn(-2) },
+        { id: App.utils.uid(), title: '准备项目周会汇报', detail: '梳理本周进展与下周计划', listId: work.id,    dueAt: todayAt(15, 30),     importance: 1, urgency: 1, subtasks: [
+          { id: App.utils.uid(), title: '收集各小组进展',   completed: true,  createdAt: isoIn(-2) },
+          { id: App.utils.uid(), title: '画下周里程碑图',   completed: false, createdAt: isoIn(-2) },
+          { id: App.utils.uid(), title: '准备演示 demo',    completed: false, createdAt: isoIn(-2) },
+        ], completed: false, completedAt: null,       createdAt: isoIn(-2),  updatedAt: isoIn(-2) },
         { id: App.utils.uid(), title: '回复客户邮件',     detail: '',                     listId: work.id,    dueAt: todayAt(11, 0),      importance: 0, urgency: 1, completed: false, completedAt: null,       createdAt: isoIn(-3),  updatedAt: isoIn(-3) },
         { id: App.utils.uid(), title: '阅读《深度工作》第三章', detail: '记录三条要点',    listId: reading.id, dueAt: dayOffset(2, 21),    importance: 1, urgency: 0, completed: false, completedAt: null,       createdAt: isoIn(-5),  updatedAt: isoIn(-5) },
         { id: App.utils.uid(), title: '清理桌面文件',     detail: '',                     listId: null,       dueAt: null,                importance: 0, urgency: 0, completed: false, completedAt: null,       createdAt: isoIn(-10), updatedAt: isoIn(-10) },
@@ -310,6 +366,10 @@ App.store = (() => {
     restoreTask,
     setQuadrant,
     quadrantOf,
+    addSubtask,
+    updateSubtask,
+    toggleSubtask,
+    deleteSubtask,
     addList,
     updateList,
     deleteList,
