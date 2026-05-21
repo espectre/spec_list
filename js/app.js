@@ -1,88 +1,145 @@
 (() => {
+  // Top-level modules. Order in icon-nav and bottom-nav follows this list.
   const ROUTES = [
-    { id: 'schedule', label: '日程',   icon: 'schedule', mount: () => App.views.schedule.mount(els.viewRoot, els.viewHeader) },
-    { id: 'calendar', label: '日历',   icon: 'calendar', mount: () => App.views.calendar.mount(els.viewRoot, els.viewHeader) },
-    { id: 'matrix',   label: '四象限', icon: 'matrix',   mount: () => App.views.matrix.mount(els.viewRoot, els.viewHeader) },
-    { id: 'notes',    label: '笔记',   icon: 'notes',    mount: () => App.views.notes.mount(els.viewRoot, els.viewHeader) },
+    { id: 'schedule',  label: '清单',   icon: 'schedule',  mount: () => App.views.schedule.mount(els.viewRoot, els.viewHeader) },
+    { id: 'calendar',  label: '日历',   icon: 'calendar',  mount: () => App.views.calendar.mount(els.viewRoot, els.viewHeader) },
+    { id: 'notes',     label: '笔记',   icon: 'notes',     mount: () => App.views.notes.mount(els.viewRoot, els.viewHeader) },
+    { id: 'matrix',    label: '四象限', icon: 'matrix',    mount: () => App.views.matrix.mount(els.viewRoot, els.viewHeader) },
+    { id: 'focus',     label: '番茄',   icon: 'focus',     mount: () => App.views.focus.mount(els.viewRoot, els.viewHeader) },
+    { id: 'habits',    label: '习惯',   icon: 'habit',     mount: () => App.views.habits.mount(els.viewRoot, els.viewHeader) },
+    { id: 'countdown', label: '倒数日', icon: 'countdown', mount: () => App.views.countdown.mount(els.viewRoot, els.viewHeader) },
   ];
 
+  const BOTTOM = ['schedule', 'calendar', 'focus', 'notes'];
+
   const els = {
-    viewRoot:    document.getElementById('view-root'),
-    viewHeader:  document.getElementById('view-header'),
-    sideNav:     document.getElementById('side-nav'),
-    bottomNav:   document.getElementById('bottom-nav'),
-    resetBtn:    document.getElementById('reset-btn'),
-    modalRoot:   document.getElementById('modal-root'),
+    viewRoot:   document.getElementById('view-root'),
+    viewHeader: document.getElementById('view-header'),
+    iconNav:    document.getElementById('icon-nav'),
+    groupNav:   document.getElementById('group-nav'),
+    bottomNav:  document.getElementById('bottom-nav'),
+    modalRoot:  document.getElementById('modal-root'),
   };
 
   let currentRoute = null;
   let cleanup = null;
 
-  function currentId() {
+  function currentRouteId() {
     const m = location.hash.match(/^#\/([^/]+)/);
     const seg = m && m[1];
     return ROUTES.find((r) => r.id === seg)?.id || 'schedule';
   }
 
-  function activeListId() {
-    const m = location.hash.match(/^#\/schedule\/list\/([^/]+)/);
-    return m && m[1];
+  function currentScheduleSub() {
+    const m = location.hash.match(/^#\/schedule(?:\/(.+))?$/);
+    const sub = m && m[1];
+    if (!sub) return 'all';
+    if (sub === 'inbox') return 'inbox';
+    if (sub.startsWith('list/')) return 'list:' + sub.slice(5);
+    return 'all';
   }
 
-  function renderNav() {
+  function renderIconNav() {
+    // Logo is already in the DOM; we replace the rest.
+    const logo = els.iconNav.querySelector('div'); // first child = logo
+    els.iconNav.innerHTML = '';
+    if (logo) els.iconNav.appendChild(logo);
+
+    ROUTES.forEach((r) => {
+      const active = r.id === currentRoute;
+      const a = document.createElement('a');
+      a.href = `#/${r.id}`;
+      a.dataset.route = r.id;
+      a.className = `w-full px-1 py-2 flex flex-col items-center gap-0.5 transition cursor-pointer
+                     ${active ? 'text-white' : 'text-slate-400 hover:text-white'}`;
+      a.innerHTML = `
+        <span class="${active ? 'bg-brand-600/30 ring-1 ring-brand-500' : ''} rounded-lg p-1.5 inline-flex items-center justify-center">${App.icons[r.icon](20)}</span>
+        <span class="text-[10px] leading-tight">${r.label}</span>
+      `;
+      els.iconNav.appendChild(a);
+    });
+
+    // Reset link at the bottom
+    const spacer = document.createElement('div'); spacer.className = 'flex-1';
+    els.iconNav.appendChild(spacer);
+    const reset = document.createElement('button');
+    reset.id = 'icon-reset';
+    reset.className = 'w-full px-1 py-2 flex flex-col items-center gap-0.5 text-slate-500 hover:text-white transition text-[10px]';
+    reset.innerHTML = `<span class="rounded-lg p-1.5 inline-flex">${App.icons.trash(16)}</span><span class="leading-tight">重置</span>`;
+    reset.addEventListener('click', () => {
+      if (confirm('重置所有数据为示例内容？此操作不可撤销。')) App.store.reset();
+    });
+    els.iconNav.appendChild(reset);
+  }
+
+  function renderGroupNav() {
+    // group-nav: shown only on schedule route AND on md+ (never on mobile)
+    if (currentRoute !== 'schedule') {
+      els.groupNav.className = 'hidden flex-col bg-white border-r border-slate-200 shrink-0';
+      return;
+    }
+    els.groupNav.className = 'hidden md:flex md:w-56 lg:w-64 flex-col bg-white border-r border-slate-200 shrink-0';
+
     const state = App.store.get();
-    const activeList = activeListId();
+    const sub = currentScheduleSub();
     const esc = App.utils.escapeHtml;
 
-    const navItems = ROUTES.map((r) => {
-      const active = r.id === currentRoute && !(r.id === 'schedule' && activeList);
-      return `
-        <a href="#/${r.id}" data-route="${r.id}"
-           class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition
-                  ${active ? 'bg-brand-50 text-brand-700 font-medium' : 'text-slate-600 hover:bg-slate-50'}">
-          <span class="${active ? 'text-brand-600' : 'text-slate-400'}">${App.icons[r.icon](20)}</span>
-          ${r.label}
-        </a>
-      `;
-    }).join('');
+    const allCount    = state.tasks.filter((t) => !t.completed).length;
+    const inboxCount  = state.tasks.filter((t) => !t.completed && !t.listId).length;
 
-    const listSection = `
-      <div class="mt-6">
-        <div class="px-3 mb-1.5 text-[11px] text-slate-400 uppercase tracking-wider flex items-center justify-between">
-          <span>我的清单</span>
-          <button id="sb-new-list" class="text-slate-400 hover:text-brand-600" title="新建清单">${App.icons.plus(14)}</button>
-        </div>
-        ${state.lists.length === 0
-          ? `<div class="px-3 py-2 text-xs text-slate-300">还没有清单</div>`
-          : state.lists.map((l) => {
-              const active = activeList === l.id;
-              const count = state.tasks.filter((t) => t.listId === l.id && !t.completed).length;
-              return `
-                <a href="#/schedule/list/${l.id}" data-list="${l.id}"
-                   class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition
-                          ${active ? 'bg-brand-50 text-brand-700 font-medium' : 'text-slate-600 hover:bg-slate-50'}">
-                  <span class="w-2 h-2 rounded-full shrink-0" style="background:${l.color}"></span>
-                  <span class="truncate flex-1">${esc(l.name)}</span>
-                  ${count > 0 ? `<span class="text-[11px] ${active ? 'text-brand-500' : 'text-slate-400'}">${count}</span>` : ''}
-                </a>
-              `;
-            }).join('')}
+    const row = (id, leading, label, count, active) => `
+      <a href="#/schedule${id === 'all' ? '' : '/' + id}" data-group="${id}"
+         class="flex items-center gap-3 px-4 py-2.5 mx-2 rounded-lg text-sm transition
+                ${active ? 'bg-brand-50 text-brand-700 font-medium' : 'text-slate-700 hover:bg-slate-50'}">
+        <span class="w-4 inline-flex justify-center ${active ? 'text-brand-600' : 'text-slate-400'}">${leading}</span>
+        <span class="flex-1 truncate">${label}</span>
+        ${count > 0 ? `<span class="text-xs text-slate-400 tabular-nums">${count}</span>` : ''}
+      </a>
+    `;
+
+    const listRow = (l) => {
+      const active = sub === 'list:' + l.id;
+      const count = state.tasks.filter((t) => t.listId === l.id && !t.completed).length;
+      return row('list/' + l.id,
+        `<span class="w-2 h-2 rounded-full inline-block" style="background:${l.color}"></span>`,
+        esc(l.name), count, active);
+    };
+
+    els.groupNav.innerHTML = `
+      <div class="px-5 py-4 border-b border-slate-100">
+        <div class="text-base font-semibold text-slate-900">清单</div>
+      </div>
+      <div class="flex-1 overflow-y-auto py-2">
+        ${row('all',   App.icons.list(16),   '全部分组', allCount,   sub === 'all')}
+        ${row('inbox', App.icons.inbox(16),  '任务箱',   inboxCount, sub === 'inbox')}
+        ${state.lists.length > 0 ? `
+          <div class="mt-3 mb-1 px-5 text-[11px] text-slate-400">我的清单</div>
+          ${state.lists.map(listRow).join('')}
+        ` : ''}
+        <button id="gn-new-list" class="w-full mt-2 flex items-center gap-3 px-4 py-2.5 mx-2 rounded-lg text-sm text-slate-500 hover:bg-slate-50 transition">
+          <span class="w-4 inline-flex justify-center text-slate-400">${App.icons.plus(16)}</span>
+          <span class="flex-1 text-left">添加清单</span>
+        </button>
+      </div>
+      <div class="px-3 py-2 border-t border-slate-100">
+        <button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-slate-500 hover:bg-slate-50 transition" disabled>
+          <span class="w-4 inline-flex justify-center text-slate-400">${App.icons.tags(16)}</span>
+          <span class="flex-1 text-left">标签管理</span>
+          <span class="text-[10px] text-slate-300">v2</span>
+        </button>
       </div>
     `;
 
-    els.sideNav.innerHTML = navItems + listSection;
-    els.sideNav.querySelector('#sb-new-list')?.addEventListener('click', (e) => {
-      e.preventDefault();
-      // ensure we're on schedule view so new list opens its modal
-      if (currentRoute !== 'schedule') location.hash = '#/schedule';
-      // openNewListModal lives in schedule view; expose via App.views.schedule
-      setTimeout(() => App.views.schedule?.openNewListModal?.(), 30);
+    els.groupNav.querySelector('#gn-new-list')?.addEventListener('click', () => {
+      App.views.schedule?.openNewListModal?.();
     });
+  }
 
-    // Bottom nav (mobile) — unchanged
+  function renderBottomNav() {
     els.bottomNav.innerHTML = `
       <div class="grid grid-cols-4">
-        ${ROUTES.map((r) => {
+        ${BOTTOM.map((id) => {
+          const r = ROUTES.find((x) => x.id === id);
           const active = r.id === currentRoute;
           return `
             <a href="#/${r.id}" data-route="${r.id}"
@@ -97,10 +154,16 @@
     `;
   }
 
+  function renderNav() {
+    renderIconNav();
+    renderGroupNav();
+    renderBottomNav();
+  }
+
   App.refreshNav = renderNav;
 
   function render() {
-    const id = currentId();
+    const id = currentRouteId();
     currentRoute = id;
 
     if (cleanup) { try { cleanup(); } catch (e) {} cleanup = null; }
@@ -173,16 +236,8 @@
   // ---------- Wire up ----------
   window.addEventListener('hashchange', render);
 
-  els.resetBtn?.addEventListener('click', () => {
-    if (confirm('重置所有数据为示例内容？此操作不可撤销。')) {
-      App.store.reset();
-    }
-  });
-
-  // Re-render sidebar when store data changes (counts + list names)
   App.store.subscribe(() => renderNav());
 
-  // ensure starting hash
   if (!location.hash) location.hash = '#/schedule';
   render();
 })();
