@@ -238,7 +238,10 @@ App.views.schedule = (() => {
     const repeatIcon = (t.repeat && t.repeat.rule)
       ? `<span class="text-slate-400 inline-flex items-center" title="重复任务">${App.icons.repeat(11)}</span>`
       : '';
-    return `<span class="inline-flex items-center gap-1 text-xs ${cls}">${repeatIcon}${App.icons.clock(13)}<span class="tabular-nums">${label}</span></span>`;
+    const bellIcon = (t.reminder && Number.isFinite(t.reminder.offsetMinutes))
+      ? `<span class="text-slate-400 inline-flex items-center" title="有提醒">${App.icons.bell(11)}</span>`
+      : '';
+    return `<span class="inline-flex items-center gap-1 text-xs ${cls}">${repeatIcon}${bellIcon}${App.icons.clock(13)}<span class="tabular-nums">${label}</span></span>`;
   }
 
   // ---------- Task row ----------

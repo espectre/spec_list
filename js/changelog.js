@@ -5,6 +5,22 @@ window.App = window.App || {};
 // "openTask: 'first'" means: navigate to schedule, pick first task, open its detail panel.
 App.CHANGELOG = [
   {
+    id: 'reminder-2026-05-22',
+    date: '2026-05-22',
+    title: '任务提醒（浏览器通知）',
+    summary: '给任务设个提醒（准点 / 提前 5 / 10 / 30 / 1 小时 / 1 天），到点弹浏览器通知。点通知直接打开任务详情。仅在 App 标签页打开时工作。',
+    highlights: [
+      { label: '详情面板提醒 select', route: '#/schedule', selectorFn: () => {
+          const state = App.store.get();
+          const t = state.tasks.find((x) => !x.completed && x.reminder);
+          if (t) App.detail.open(t.id);
+          return document.querySelector('#d-reminder');
+        }
+      },
+      { label: '任务行铃铛图标', route: '#/schedule', selectorFn: () => document.querySelector('[data-task-id] svg[viewBox="0 0 24 24"] path[d^="M18 8A6 6"]')?.closest('[data-task-id]') },
+    ],
+  },
+  {
     id: 'sort-filter-quickadd-2026-05-22',
     date: '2026-05-22',
     title: '排序 / 标签筛选 / 快速添加增强',

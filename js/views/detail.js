@@ -120,7 +120,7 @@ App.detail = (() => {
             <select id="d-list" class="text-sm border border-slate-200 rounded px-2 py-1 outline-none focus:border-brand-400 bg-white">${listOptions}</select>
           `)}
           ${repeatRow(t)}
-          ${disabledMetaRow('提醒', '无')}
+          ${reminderRow(t)}
           ${tagsRow(t, state)}
         </div>
 
@@ -188,6 +188,41 @@ App.detail = (() => {
           </select>
           ${rule && nextLabel ? `<span class="text-[11px] text-slate-400">下次 ${nextLabel}</span>` : ''}
           ${!hasDue ? '<span class="text-[11px] text-slate-400">需先设截止时间</span>' : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  function reminderRow(t) {
+    const hasDue = !!t.dueAt;
+    const minutes = t.reminder && Number.isFinite(t.reminder.offsetMinutes) ? t.reminder.offsetMinutes : null;
+    const options = [
+      { v: '',     l: '不提醒' },
+      { v: '0',    l: '准点' },
+      { v: '5',    l: '提前 5 分钟' },
+      { v: '10',   l: '提前 10 分钟' },
+      { v: '30',   l: '提前 30 分钟' },
+      { v: '60',   l: '提前 1 小时' },
+      { v: '1440', l: '提前 1 天' },
+    ];
+    const current = minutes == null ? '' : String(minutes);
+    const perm = App.reminder?.permission?.() || 'unsupported';
+    let permWarn = '';
+    if (minutes != null && hasDue) {
+      if (perm === 'denied') permWarn = '<span class="text-[11px] text-red-500">浏览器已拒绝通知</span>';
+      else if (perm === 'default') permWarn = '<button id="d-reminder-enable" class="text-[11px] text-amber-600 underline">未开启通知，点此开启</button>';
+      else if (perm === 'unsupported') permWarn = '<span class="text-[11px] text-slate-400">当前浏览器不支持通知</span>';
+    }
+    return `
+      <div class="flex items-center gap-3 px-1 py-1">
+        <span class="text-slate-400 w-4 shrink-0">${App.icons.bell(14)}</span>
+        <span class="text-xs text-slate-500 w-14 shrink-0">提醒</span>
+        <div class="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+          <select id="d-reminder" ${!hasDue ? 'disabled' : ''} class="text-sm border border-slate-200 rounded px-2 py-1 outline-none focus:border-brand-400 bg-white ${!hasDue ? 'opacity-50' : ''}">
+            ${options.map((o) => `<option value="${o.v}" ${o.v === current ? 'selected' : ''}>${o.l}</option>`).join('')}
+          </select>
+          ${!hasDue ? '<span class="text-[11px] text-slate-400">需先设截止时间</span>' : ''}
+          ${permWarn}
         </div>
       </div>
     `;
@@ -326,6 +361,19 @@ App.detail = (() => {
       App.store.updateTask(t.id, { repeat: v ? { rule: v } : null });
     });
 
+    // Reminder
+    panel.querySelector('#d-reminder')?.addEventListener('change', (e) => {
+      const v = e.target.value;
+      const reminder = v === '' ? null : { offsetMinutes: Number(v) };
+      App.store.updateTask(t.id, { reminder, reminderFiredAt: null });
+    });
+    panel.querySelector('#d-reminder-enable')?.addEventListener('click', async () => {
+      const res = await App.reminder.request();
+      if (res === 'granted') App.toast.show({ message: '通知已开启', duration: 1500 });
+      // Trigger re-render so the warning hint updates
+      App.detail.refresh?.();
+    });
+
     // Subtasks: toggle / edit / delete
     panel.querySelectorAll('[data-sub-toggle]').forEach((cb) => {
       cb.addEventListener('change', () => App.store.toggleSubtask(t.id, cb.dataset.subToggle));
@@ -380,5 +428,5 @@ App.detail = (() => {
     });
   }
 
-  return { open, close };
+  return { open, close, refresh: refreshIfOpen };
 })();

@@ -21,6 +21,8 @@ window.App = window.App || {};
  *   importance (0|1), urgency (0|1),   // 1 = high
  *   subtasks: SubTask[],
  *   repeat: null | { rule: 'daily'|'weekly'|'monthly'|'yearly' },
+ *   reminder: null | { offsetMinutes: number },  // notification ahead of dueAt
+ *   reminderFiredAt: ISO | null,                  // last time we fired a notification
  *   completed, completedAt,
  *   lastCompletedAt: ISO | null,       // last time the recurring task was advanced
  *   createdAt, updatedAt,
@@ -53,6 +55,8 @@ App.store = (() => {
         if (!Array.isArray(t.tagIds)) t.tagIds = [];
         if (!('repeat' in t)) t.repeat = null;
         if (!('lastCompletedAt' in t)) t.lastCompletedAt = null;
+        if (!('reminder' in t)) t.reminder = null;
+        if (!('reminderFiredAt' in t)) t.reminderFiredAt = null;
       });
       return parsed;
     } catch (e) {
@@ -99,6 +103,8 @@ App.store = (() => {
       tagIds: Array.isArray(partial.tagIds) ? partial.tagIds.slice() : [],
       subtasks: [],
       repeat: partial.repeat || null,
+      reminder: partial.reminder || null,
+      reminderFiredAt: null,
       completed: false,
       completedAt: null,
       lastCompletedAt: null,
@@ -143,6 +149,8 @@ App.store = (() => {
         t.lastCompletedAt = now;
         // reset subtask completion for the next occurrence
         if (Array.isArray(t.subtasks)) t.subtasks.forEach((s) => { s.completed = false; });
+        // clear reminder fired flag so the next occurrence can notify again
+        t.reminderFiredAt = null;
         t.updatedAt = now;
         emit();
         return;
@@ -416,7 +424,7 @@ App.store = (() => {
       lists: [work, life, reading],
       tags:  [tagUrgent, tagPhone, tagWaiting],
       tasks: [
-        { id: App.utils.uid(), title: '准备项目周会汇报', detail: '梳理本周进展与下周计划', listId: work.id,    dueAt: todayAt(15, 30),     importance: 1, urgency: 1, subtasks: [
+        { id: App.utils.uid(), title: '准备项目周会汇报', detail: '梳理本周进展与下周计划', listId: work.id,    dueAt: todayAt(15, 30),     importance: 1, urgency: 1, reminder: { offsetMinutes: 30 }, subtasks: [
           { id: App.utils.uid(), title: '收集各小组进展',   completed: true,  createdAt: isoIn(-2) },
           { id: App.utils.uid(), title: '画下周里程碑图',   completed: false, createdAt: isoIn(-2) },
           { id: App.utils.uid(), title: '准备演示 demo',    completed: false, createdAt: isoIn(-2) },
@@ -424,7 +432,7 @@ App.store = (() => {
         { id: App.utils.uid(), title: '回复客户邮件',     detail: '',                     listId: work.id,    tagIds: [tagUrgent.id, tagWaiting.id], dueAt: todayAt(11, 0),      importance: 0, urgency: 1, completed: false, completedAt: null,       createdAt: isoIn(-3),  updatedAt: isoIn(-3) },
         { id: App.utils.uid(), title: '阅读《深度工作》第三章', detail: '记录三条要点',    listId: reading.id, dueAt: dayOffset(2, 21),    importance: 1, urgency: 0, completed: false, completedAt: null,       createdAt: isoIn(-5),  updatedAt: isoIn(-5) },
         { id: App.utils.uid(), title: '清理桌面文件',     detail: '',                     listId: null,       dueAt: null,                importance: 0, urgency: 0, completed: false, completedAt: null,       createdAt: isoIn(-10), updatedAt: isoIn(-10) },
-        { id: App.utils.uid(), title: '每日站会',         detail: '5 分钟同步昨日完成、今日重点、阻塞', listId: work.id, dueAt: todayAt(9, 30), importance: 0, urgency: 1, repeat: { rule: 'daily' },  completed: false, completedAt: null, createdAt: isoIn(-40), updatedAt: isoIn(-1) },
+        { id: App.utils.uid(), title: '每日站会',         detail: '5 分钟同步昨日完成、今日重点、阻塞', listId: work.id, dueAt: todayAt(9, 30), importance: 0, urgency: 1, repeat: { rule: 'daily' }, reminder: { offsetMinutes: 5 }, completed: false, completedAt: null, createdAt: isoIn(-40), updatedAt: isoIn(-1) },
         { id: App.utils.uid(), title: '周报',             detail: '汇总本周进展和下周计划',           listId: work.id, dueAt: todayAt(17, 0), importance: 1, urgency: 0, repeat: { rule: 'weekly' }, completed: false, completedAt: null, createdAt: isoIn(-60), updatedAt: isoIn(-2) },
         { id: App.utils.uid(), title: '体检预约',         detail: '上午空腹',              listId: life.id,    tagIds: [tagPhone.id], dueAt: dayOffset(5, 8, 30), importance: 1, urgency: 0, completed: false, completedAt: null,       createdAt: isoIn(-12), updatedAt: isoIn(-12) },
         { id: App.utils.uid(), title: '提交月度报销',     detail: '',                     listId: work.id,    dueAt: dayOffset(-1, 18),   importance: 0, urgency: 1, completed: true,  completedAt: isoIn(-20), createdAt: isoIn(-30), updatedAt: isoIn(-20) },
