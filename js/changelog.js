@@ -5,6 +5,22 @@ window.App = window.App || {};
 // "openTask: 'first'" means: navigate to schedule, pick first task, open its detail panel.
 App.CHANGELOG = [
   {
+    id: 'sort-filter-quickadd-2026-05-22',
+    date: '2026-05-22',
+    title: '排序 / 标签筛选 / 快速添加增强',
+    summary: '顶部加"优先级 ▼"按 5 种维度排序；"标签 ▼"多选筛当前列表；输入任务标题后下方出现 4 个 chip（时间/清单/优先级/标签），不用进详情就能一次填好。',
+    highlights: [
+      { label: '排序按钮',     route: '#/schedule', selector: '#sort-btn' },
+      { label: '标签筛选按钮', route: '#/schedule', selector: '#filter-tag-btn' },
+      { label: '快速添加 chip', route: '#/schedule', selectorFn: () => {
+          const inp = document.querySelector('#quick-add-title');
+          if (inp) { inp.value = '试一下'; inp.dispatchEvent(new Event('input', { bubbles: true })); }
+          return document.querySelector('#qa-chips');
+        }
+      },
+    ],
+  },
+  {
     id: 'repeat-2026-05-22',
     date: '2026-05-22',
     title: '重复任务',
