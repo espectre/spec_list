@@ -10,14 +10,32 @@ App.views.schedule = (() => {
     { id: 'week',     label: '近一周' },
   ];
 
+  // Sort options for the 优先级 ▼ toolbar dropdown.
+  const SORT_OPTIONS = [
+    { id: 'default',   label: '默认（优先级 + 时间）' },
+    { id: 'priority',  label: '优先级' },
+    { id: 'dueAt',     label: '截止时间' },
+    { id: 'createdAt', label: '创建时间（最近）' },
+    { id: 'title',     label: '标题（A→Z）' },
+  ];
+
   // Group / scope — chosen via group nav (desktop) or mobile sheet.
-  // Values: 'all' | 'inbox' | 'list:<id>'
+  // Values: 'all' | 'inbox' | 'list:<id>' | 'tag:<id>'
   let currentGroup = 'all';
   let currentWindow = 'all';
   let query = '';
-  let showCompleted = false; // folded by default
+  let sortBy = 'default';
+  let filterTagIds = [];          // multi-tag filter applied on top of group
+  let showCompleted = false;      // folded by default
+  // Quick-add transient state (lives until submit or group change)
+  let qa = { dueAt: null, listId: null, importance: 0, urgency: 0, tagIds: [] };
+  let qaTitle = '';   // preserved across redraws so chip pickers don't clobber what user is typing
   let unsubscribe = null;
   let _root, _header;
+
+  function resetQA() {
+    qa = { dueAt: null, listId: groupListId(), importance: 0, urgency: 0, tagIds: [] };
+  }
 
   function groupFromHash() {
     const m = location.hash.match(/^#\/schedule(?:\/(.+))?$/);
@@ -52,6 +70,7 @@ App.views.schedule = (() => {
       if (!App.store.get().tags.some((tg) => tg.id === id)) g = 'all';
     }
     currentGroup = g;
+    resetQA();
     syncHashSilently();
     redraw();
     App.refreshNav?.();
@@ -133,24 +152,48 @@ App.views.schedule = (() => {
            (t.detail || '').toLowerCase().includes(q);
   }
 
+  function matchesFilterTags(t) {
+    if (filterTagIds.length === 0) return true;
+    const set = new Set(t.tagIds || []);
+    // OR semantics: task must have at least one of the selected tags
+    return filterTagIds.some((id) => set.has(id));
+  }
+
   function activeTasks(tasks) {
-    return tasks.filter((t) => !t.completed && matchesGroup(t) && matchesWindow(t) && matchesQuery(t));
+    return tasks.filter((t) => !t.completed && matchesGroup(t) && matchesWindow(t) && matchesQuery(t) && matchesFilterTags(t));
   }
 
   function completedTasks(tasks) {
-    return tasks.filter((t) => t.completed && matchesGroup(t) && matchesWindow(t) && matchesQuery(t));
+    return tasks.filter((t) => t.completed && matchesGroup(t) && matchesWindow(t) && matchesQuery(t) && matchesFilterTags(t));
   }
 
   function sortTasks(list) {
-    return list.slice().sort((a, b) => {
-      const qa = (a.importance * 2 + a.urgency);
-      const qb = (b.importance * 2 + b.urgency);
-      if (qa !== qb) return qb - qa;
-      if (a.dueAt && b.dueAt) return new Date(a.dueAt) - new Date(b.dueAt);
-      if (a.dueAt) return -1;
-      if (b.dueAt) return 1;
-      return new Date(b.createdAt) - new Date(a.createdAt);
-    });
+    const arr = list.slice();
+    switch (sortBy) {
+      case 'priority':
+        return arr.sort((a, b) => (b.importance * 2 + b.urgency) - (a.importance * 2 + a.urgency));
+      case 'dueAt':
+        return arr.sort((a, b) => {
+          if (!a.dueAt && !b.dueAt) return 0;
+          if (!a.dueAt) return 1;
+          if (!b.dueAt) return -1;
+          return new Date(a.dueAt) - new Date(b.dueAt);
+        });
+      case 'createdAt':
+        return arr.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      case 'title':
+        return arr.sort((a, b) => (a.title || '').localeCompare(b.title || '', 'zh-Hans-CN'));
+      default:
+        return arr.sort((a, b) => {
+          const qa_ = (a.importance * 2 + a.urgency);
+          const qb_ = (b.importance * 2 + b.urgency);
+          if (qa_ !== qb_) return qb_ - qa_;
+          if (a.dueAt && b.dueAt) return new Date(a.dueAt) - new Date(b.dueAt);
+          if (a.dueAt) return -1;
+          if (b.dueAt) return 1;
+          return new Date(b.createdAt) - new Date(a.createdAt);
+        });
+    }
   }
 
   // ---------- Priority flag (4-state cycle via importance × urgency) ----------
@@ -255,6 +298,9 @@ App.views.schedule = (() => {
   }
 
   function timeTabRow() {
+    const sortActive = sortBy !== 'default';
+    const sortLabel = sortActive ? (SORT_OPTIONS.find((o) => o.id === sortBy)?.label.split('（')[0] || '排序') : '优先级';
+    const filterActive = filterTagIds.length > 0;
     return `
       <div class="flex items-center gap-1 mb-3 border-b border-slate-200">
         ${TIME_WINDOWS.map((w) => {
@@ -269,12 +315,18 @@ App.views.schedule = (() => {
           `;
         }).join('')}
         <div class="flex-1"></div>
-        <div class="hidden md:flex items-center gap-2 pr-2">
+        <div class="hidden md:flex items-center gap-2 pr-2 pb-1.5">
           <div class="relative">
             <input id="task-search" type="text" value="${App.utils.escapeHtml(query)}" placeholder="搜索"
-                   class="w-40 lg:w-48 pl-8 pr-2 py-1.5 text-sm bg-slate-100 rounded-lg outline-none focus:bg-white focus:ring-2 focus:ring-brand-100">
-            <span class="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400">${App.icons.search(14)}</span>
+                   class="w-32 lg:w-40 pl-7 pr-2 py-1 text-xs bg-slate-100 rounded-lg outline-none focus:bg-white focus:ring-2 focus:ring-brand-100">
+            <span class="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400">${App.icons.search(12)}</span>
           </div>
+          <button id="sort-btn" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border ${sortActive ? 'border-brand-300 text-brand-700 bg-brand-50' : 'border-slate-200 text-slate-600 hover:border-slate-300'}">
+            ${sortLabel} ${App.icons.chevronD(11)}
+          </button>
+          <button id="filter-tag-btn" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border ${filterActive ? 'border-brand-300 text-brand-700 bg-brand-50' : 'border-slate-200 text-slate-600 hover:border-slate-300'}">
+            标签${filterActive ? ` (${filterTagIds.length})` : ''} ${App.icons.chevronD(11)}
+          </button>
         </div>
       </div>
     `;
@@ -302,14 +354,21 @@ App.views.schedule = (() => {
         </div>
 
         <!-- Quick add -->
-        <form id="quick-add" class="flex items-center gap-2 bg-white rounded-xl border border-slate-200 px-3 py-2.5 mb-3 shadow-sm focus-within:border-brand-400 focus-within:ring-2 focus-within:ring-brand-100 transition">
-          <span class="text-slate-300 shrink-0">${App.icons.plus(18)}</span>
-          <input id="quick-add-title" type="text" placeholder="添加任务到「${esc(groupName)}」" class="flex-1 min-w-0 outline-none text-sm bg-transparent" maxlength="120">
-          <input id="quick-add-date" type="date" class="shrink-0 w-32 text-xs text-slate-500 outline-none bg-transparent" title="截止日期">
-          <button id="quick-submit" type="submit" class="shrink-0 w-7 h-7 rounded-full bg-brand-600 hover:bg-brand-700 text-white inline-flex items-center justify-center" title="保存（回车）">
-            ${App.icons.chevronR(16)}
-          </button>
-        </form>
+        <div class="bg-white rounded-xl border border-slate-200 mb-3 shadow-sm focus-within:border-brand-400 focus-within:ring-2 focus-within:ring-brand-100 transition">
+          <form id="quick-add" class="flex items-center gap-2 px-3 py-2.5">
+            <span class="text-slate-300 shrink-0">${App.icons.plus(18)}</span>
+            <input id="quick-add-title" type="text" value="${esc(qaTitle)}" placeholder="添加任务到「${esc(groupName)}」" class="flex-1 min-w-0 outline-none text-sm bg-transparent" maxlength="120">
+            <button id="quick-submit" type="submit" class="shrink-0 w-7 h-7 rounded-full bg-brand-600 hover:bg-brand-700 text-white inline-flex items-center justify-center" title="保存（回车）">
+              ${App.icons.chevronR(16)}
+            </button>
+          </form>
+          <div id="qa-chips" class="px-3 pb-2.5 flex-wrap items-center gap-2 ${qaTitle.trim() ? 'flex' : 'hidden'}">
+            ${qaChip('time', App.icons.clock(12), qaTimeLabel(), !!qa.dueAt)}
+            ${qaChip('list', App.icons.list(12),  qaListLabel(state), !!qa.listId)}
+            ${qaChip('flag', App.icons.flagFill(12), qaFlagLabel(), !!(qa.importance || qa.urgency))}
+            ${qaChip('tags', App.icons.tags(12), qaTagsLabel(), qa.tagIds.length > 0)}
+          </div>
+        </div>
 
         <!-- Active tasks -->
         <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -375,6 +434,244 @@ App.views.schedule = (() => {
     headerEl.querySelector('#rename-tag')?.addEventListener('click', openRenameTagModal);
     headerEl.querySelector('#delete-tag')?.addEventListener('click', confirmDeleteTag);
     headerEl.querySelector('#scope-picker')?.addEventListener('click', openGroupSheet);
+  }
+
+  // ---------- Quick-add chip helpers ----------
+  function qaChip(kind, icon, label, active) {
+    const cls = active
+      ? 'inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg bg-brand-50 text-brand-700 border border-brand-200 hover:bg-brand-100'
+      : 'inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg bg-slate-50 text-slate-500 border border-slate-200 hover:bg-slate-100';
+    return `<button type="button" data-qa-chip="${kind}" class="${cls}">${icon} ${App.utils.escapeHtml(label)}</button>`;
+  }
+
+  function qaTimeLabel() {
+    if (!qa.dueAt) return '时间';
+    return App.utils.formatDateTime(qa.dueAt);
+  }
+  function qaListLabel(state) {
+    if (!qa.listId) return '任务箱';
+    const l = state.lists.find((x) => x.id === qa.listId);
+    return l?.name || '任务箱';
+  }
+  function qaFlagLabel() {
+    if (!qa.importance && !qa.urgency) return '优先级';
+    if (qa.importance && qa.urgency) return '重要紧急';
+    if (qa.importance) return '重要';
+    return '紧急';
+  }
+  function qaTagsLabel() {
+    return qa.tagIds.length > 0 ? `标签 ${qa.tagIds.length}` : '标签';
+  }
+
+  function openQATimeModal() {
+    const dueDate = qa.dueAt ? App.utils.toDateKey(qa.dueAt) : '';
+    const dueTime = qa.dueAt ? App.utils.formatTime(qa.dueAt) : '';
+    const panel = App.modal.open(`
+      <div class="p-5 w-72">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-sm font-semibold text-slate-900">设置截止时间</h3>
+          <button data-modal-close class="text-slate-400 hover:text-slate-600">${App.icons.close(18)}</button>
+        </div>
+        <div class="grid grid-cols-2 gap-2 mb-3">
+          <button data-quick-due="today"    class="px-3 py-2 text-sm rounded-lg border border-slate-200 hover:bg-slate-50">今天 9:00</button>
+          <button data-quick-due="tomorrow" class="px-3 py-2 text-sm rounded-lg border border-slate-200 hover:bg-slate-50">明天 9:00</button>
+        </div>
+        <div class="flex items-center gap-2 mb-3">
+          <input id="qa-date" type="date" value="${dueDate}" class="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-brand-400">
+          <input id="qa-time" type="time" value="${dueTime}" class="w-28 border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-brand-400">
+        </div>
+        <div class="flex items-center justify-between">
+          <button id="qa-time-clear" class="text-xs text-slate-400 hover:text-red-500">清除</button>
+          <button id="qa-time-save"  class="px-3 py-1.5 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg">确定</button>
+        </div>
+      </div>
+    `);
+    panel.querySelector('[data-quick-due="today"]').addEventListener('click', () => {
+      const d = new Date(); d.setHours(9, 0, 0, 0);
+      qa.dueAt = d.toISOString(); App.modal.close(); redraw();
+    });
+    panel.querySelector('[data-quick-due="tomorrow"]').addEventListener('click', () => {
+      const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0);
+      qa.dueAt = d.toISOString(); App.modal.close(); redraw();
+    });
+    panel.querySelector('#qa-time-clear').addEventListener('click', () => { qa.dueAt = null; App.modal.close(); redraw(); });
+    panel.querySelector('#qa-time-save').addEventListener('click', () => {
+      const date = panel.querySelector('#qa-date').value;
+      const time = panel.querySelector('#qa-time').value;
+      if (!date) { qa.dueAt = null; }
+      else {
+        const d = App.utils.fromDateKey(date);
+        if (time) { const [hh, mm] = time.split(':').map(Number); d.setHours(hh, mm, 0, 0); }
+        else d.setHours(9, 0, 0, 0);
+        qa.dueAt = d.toISOString();
+      }
+      App.modal.close();
+      redraw();
+    });
+    panel.querySelectorAll('[data-modal-close]').forEach((b) => b.addEventListener('click', App.modal.close));
+  }
+
+  function openQAListModal() {
+    const state = App.store.get();
+    const esc = App.utils.escapeHtml;
+    const opt = (id, leading, label, active) => `
+      <button data-qa-list="${id || ''}" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg ${active ? 'bg-brand-50 text-brand-700 font-medium' : 'text-slate-700 hover:bg-slate-50'}">
+        <span class="w-4 inline-flex justify-center ${active ? 'text-brand-600' : 'text-slate-400'}">${leading}</span>
+        <span class="text-sm">${label}</span>
+      </button>
+    `;
+    const panel = App.modal.open(`
+      <div class="p-3 w-64">
+        <div class="flex items-center justify-between px-2 pt-1 pb-2">
+          <h3 class="text-sm font-semibold text-slate-900">选择清单</h3>
+          <button data-modal-close class="text-slate-400 hover:text-slate-600">${App.icons.close(18)}</button>
+        </div>
+        ${opt('', App.icons.inbox(14), '任务箱', !qa.listId)}
+        ${state.lists.map((l) => opt(l.id, `<span class="w-2 h-2 rounded-full inline-block" style="background:${l.color}"></span>`, esc(l.name), qa.listId === l.id)).join('')}
+      </div>
+    `);
+    panel.querySelectorAll('[data-qa-list]').forEach((b) => {
+      b.addEventListener('click', () => { qa.listId = b.dataset.qaList || null; App.modal.close(); redraw(); });
+    });
+    panel.querySelectorAll('[data-modal-close]').forEach((b) => b.addEventListener('click', App.modal.close));
+  }
+
+  function openQAFlagModal() {
+    const panel = App.modal.open(`
+      <div class="p-3 w-64">
+        <div class="flex items-center justify-between px-2 pt-1 pb-2">
+          <h3 class="text-sm font-semibold text-slate-900">优先级</h3>
+          <button data-modal-close class="text-slate-400 hover:text-slate-600">${App.icons.close(18)}</button>
+        </div>
+        ${FLAG_STATES.map((s, i) => {
+          const active = s.imp === qa.importance && s.urg === qa.urgency;
+          return `
+            <button data-qa-flag="${i}" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg ${active ? 'bg-brand-50' : 'hover:bg-slate-50'}">
+              <span style="color:${s.color}">${App.icons.flagFill(16)}</span>
+              <span class="text-sm ${active ? 'text-brand-700 font-medium' : 'text-slate-700'}">${s.label}</span>
+            </button>
+          `;
+        }).join('')}
+      </div>
+    `);
+    panel.querySelectorAll('[data-qa-flag]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const s = FLAG_STATES[Number(b.dataset.qaFlag)];
+        qa.importance = s.imp; qa.urgency = s.urg;
+        App.modal.close(); redraw();
+      });
+    });
+    panel.querySelectorAll('[data-modal-close]').forEach((b) => b.addEventListener('click', App.modal.close));
+  }
+
+  function openQATagsModal() {
+    const state = App.store.get();
+    const esc = App.utils.escapeHtml;
+    const tagsHtml = state.tags.length === 0
+      ? '<div class="text-center text-slate-400 text-sm py-6">还没有标签，先去新建</div>'
+      : state.tags.map((tg) => {
+          const checked = qa.tagIds.includes(tg.id);
+          return `
+            <label class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-slate-50 cursor-pointer">
+              <input type="checkbox" data-qa-tag="${tg.id}" ${checked ? 'checked' : ''}>
+              <span style="color:${tg.color}">#</span>
+              <span class="text-sm flex-1">${esc(tg.name)}</span>
+            </label>
+          `;
+        }).join('');
+    const panel = App.modal.open(`
+      <div class="p-3 w-72">
+        <div class="flex items-center justify-between px-2 pt-1 pb-2">
+          <h3 class="text-sm font-semibold text-slate-900">标签</h3>
+          <button data-modal-close class="text-slate-400 hover:text-slate-600">${App.icons.close(18)}</button>
+        </div>
+        <div class="max-h-72 overflow-y-auto">${tagsHtml}</div>
+        <div class="flex items-center justify-end mt-2">
+          <button id="qa-tags-done" class="px-3 py-1.5 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg">完成</button>
+        </div>
+      </div>
+    `);
+    panel.querySelectorAll('[data-qa-tag]').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        const id = cb.dataset.qaTag;
+        if (cb.checked) { if (!qa.tagIds.includes(id)) qa.tagIds.push(id); }
+        else qa.tagIds = qa.tagIds.filter((x) => x !== id);
+      });
+    });
+    panel.querySelector('#qa-tags-done').addEventListener('click', () => { App.modal.close(); redraw(); });
+    panel.querySelectorAll('[data-modal-close]').forEach((b) => b.addEventListener('click', App.modal.close));
+  }
+
+  // ---------- Sort / Filter dropdowns ----------
+  function openSortMenu() {
+    const panel = App.modal.open(`
+      <div class="p-2 w-64">
+        <div class="text-xs text-slate-500 px-3 pt-2 pb-1">排序方式</div>
+        ${SORT_OPTIONS.map((o) => `
+          <button data-sort="${o.id}" class="w-full text-left px-3 py-2.5 rounded-lg text-sm transition
+            ${o.id === sortBy ? 'bg-brand-50 text-brand-700 font-medium' : 'text-slate-700 hover:bg-slate-50'}">
+            ${o.label}
+          </button>
+        `).join('')}
+      </div>
+    `);
+    panel.querySelectorAll('[data-sort]').forEach((b) => {
+      b.addEventListener('click', () => {
+        sortBy = b.dataset.sort;
+        App.modal.close();
+        redraw();
+      });
+    });
+  }
+
+  function openTagFilter() {
+    const state = App.store.get();
+    const esc = App.utils.escapeHtml;
+    const tagsHtml = state.tags.length === 0
+      ? '<div class="text-center text-slate-400 text-sm py-6">还没有标签</div>'
+      : state.tags.map((tg) => {
+          const checked = filterTagIds.includes(tg.id);
+          return `
+            <label class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-slate-50 cursor-pointer">
+              <input type="checkbox" data-tag-filter="${tg.id}" ${checked ? 'checked' : ''}>
+              <span class="text-sm" style="color:${tg.color}">#</span>
+              <span class="text-sm flex-1">${esc(tg.name)}</span>
+            </label>
+          `;
+        }).join('');
+    const panel = App.modal.open(`
+      <div class="p-3 w-72">
+        <div class="flex items-center justify-between px-2 pt-1 pb-2">
+          <h3 class="text-sm font-semibold text-slate-900">按标签筛选</h3>
+          <button data-modal-close class="text-slate-400 hover:text-slate-600">${App.icons.close(18)}</button>
+        </div>
+        <div class="max-h-72 overflow-y-auto">${tagsHtml}</div>
+        <div class="flex items-center justify-between mt-3 px-2">
+          <button id="clear-tag-filter" class="text-xs text-slate-400 hover:text-slate-700">清除</button>
+          <button id="apply-tag-filter" class="px-3 py-1.5 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg">完成</button>
+        </div>
+      </div>
+    `);
+    panel.querySelectorAll('[data-tag-filter]').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        const id = cb.dataset.tagFilter;
+        if (cb.checked) {
+          if (!filterTagIds.includes(id)) filterTagIds.push(id);
+        } else {
+          filterTagIds = filterTagIds.filter((x) => x !== id);
+        }
+      });
+    });
+    panel.querySelector('#clear-tag-filter').addEventListener('click', () => {
+      filterTagIds = [];
+      App.modal.close();
+      redraw();
+    });
+    panel.querySelector('#apply-tag-filter').addEventListener('click', () => {
+      App.modal.close();
+      redraw();
+    });
+    panel.querySelectorAll('[data-modal-close]').forEach((b) => b.addEventListener('click', App.modal.close));
   }
 
   // ---------- Mobile group sheet ----------
@@ -448,6 +745,10 @@ App.views.schedule = (() => {
       btn.addEventListener('click', () => setTimeWindow(btn.dataset.window));
     });
 
+    // Sort / tag-filter toolbar buttons
+    root.querySelector('#sort-btn')?.addEventListener('click', openSortMenu);
+    root.querySelector('#filter-tag-btn')?.addEventListener('click', openTagFilter);
+
     // Desktop search
     const search = root.querySelector('#task-search');
     if (search) {
@@ -496,30 +797,61 @@ App.views.schedule = (() => {
     // Quick add
     const form = root.querySelector('#quick-add');
     const titleEl = root.querySelector('#quick-add-title');
-    const dateEl = root.querySelector('#quick-add-date');
+    const chipsEl = root.querySelector('#qa-chips');
+
+    const refreshChips = () => {
+      if (!chipsEl) return;
+      if (titleEl.value.trim()) {
+        chipsEl.classList.remove('hidden');
+        chipsEl.classList.add('flex');
+      } else {
+        chipsEl.classList.add('hidden');
+        chipsEl.classList.remove('flex');
+      }
+    };
+
+    titleEl.addEventListener('input', () => {
+      qaTitle = titleEl.value;
+      refreshChips();
+    });
+
+    root.querySelectorAll('[data-qa-chip]').forEach((b) => {
+      b.addEventListener('click', () => {
+        qaTitle = titleEl.value;
+        switch (b.dataset.qaChip) {
+          case 'time': openQATimeModal(); break;
+          case 'list': openQAListModal(); break;
+          case 'flag': openQAFlagModal(); break;
+          case 'tags': openQATagsModal(); break;
+        }
+      });
+    });
+
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       const title = titleEl.value.trim();
       if (!title) return;
-      let dueAt = null;
-      if (dateEl.value) {
-        const d = App.utils.fromDateKey(dateEl.value);
-        d.setHours(9, 0, 0, 0);
-        dueAt = d.toISOString();
-      } else if (currentWindow === 'today') {
-        const d = new Date();
-        d.setHours(9, 0, 0, 0);
-        dueAt = d.toISOString();
-      } else if (currentWindow === 'tomorrow') {
-        const d = new Date(); d.setDate(d.getDate() + 1);
-        d.setHours(9, 0, 0, 0);
-        dueAt = d.toISOString();
+      let dueAt = qa.dueAt;
+      if (!dueAt) {
+        if (currentWindow === 'today') {
+          const d = new Date(); d.setHours(9, 0, 0, 0); dueAt = d.toISOString();
+        } else if (currentWindow === 'tomorrow') {
+          const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); dueAt = d.toISOString();
+        }
       }
-      const listId = groupListId();
-      App.store.addTask({ title, dueAt, listId, importance: 0, urgency: 0 });
-      titleEl.value = '';
-      dateEl.value = '';
-      titleEl.focus();
+      const listId = qa.listId !== null ? qa.listId : groupListId();
+      const taskPayload = {
+        title, dueAt, listId,
+        importance: qa.importance,
+        urgency: qa.urgency,
+        tagIds: qa.tagIds.slice(),
+      };
+      // Clear qa state BEFORE addTask so the redraw triggered by store.emit
+      // renders an empty input + hidden chips.
+      qaTitle = '';
+      resetQA();
+      App.store.addTask(taskPayload);
+      setTimeout(() => _root.querySelector('#quick-add-title')?.focus(), 30);
     });
   }
 
@@ -829,6 +1161,7 @@ App.views.schedule = (() => {
       const id = currentGroup.slice(4);
       if (!App.store.get().tags.some((tg) => tg.id === id)) currentGroup = 'all';
     }
+    resetQA();
     syncHashSilently();
     redraw();
     unsubscribe = App.store.subscribe(redraw);
