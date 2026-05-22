@@ -192,7 +192,10 @@ App.views.schedule = (() => {
     else if (isTomorrow) label = '明天';
     else label = `${d.getMonth() + 1 < 10 ? '0' : ''}${d.getMonth() + 1}-${d.getDate() < 10 ? '0' : ''}${d.getDate()}`;
     const cls = overdue ? 'text-red-500' : 'text-slate-400';
-    return `<span class="inline-flex items-center gap-1 text-xs ${cls}">${App.icons.clock(13)}<span class="tabular-nums">${label}</span></span>`;
+    const repeatIcon = (t.repeat && t.repeat.rule)
+      ? `<span class="text-slate-400 inline-flex items-center" title="重复任务">${App.icons.repeat(11)}</span>`
+      : '';
+    return `<span class="inline-flex items-center gap-1 text-xs ${cls}">${repeatIcon}${App.icons.clock(13)}<span class="tabular-nums">${label}</span></span>`;
   }
 
   // ---------- Task row ----------

@@ -119,7 +119,7 @@ App.detail = (() => {
           ${metaRow('清单', 'list', `
             <select id="d-list" class="text-sm border border-slate-200 rounded px-2 py-1 outline-none focus:border-brand-400 bg-white">${listOptions}</select>
           `)}
-          ${disabledMetaRow('重复', '无')}
+          ${repeatRow(t)}
           ${disabledMetaRow('提醒', '无')}
           ${tagsRow(t, state)}
         </div>
@@ -161,6 +161,36 @@ App.detail = (() => {
         }
       }
     }
+  }
+
+  function repeatRow(t) {
+    const rule = (t.repeat && t.repeat.rule) || '';
+    const hasDue = !!t.dueAt;
+    const options = [
+      { v: '',        l: '不重复' },
+      { v: 'daily',   l: '每天' },
+      { v: 'weekly',  l: '每周' },
+      { v: 'monthly', l: '每月' },
+      { v: 'yearly',  l: '每年' },
+    ];
+    let nextLabel = '';
+    if (rule && hasDue) {
+      const next = App.store.nextOccurrence(t.dueAt, rule);
+      if (next) nextLabel = App.utils.formatDateLabel(next);
+    }
+    return `
+      <div class="flex items-center gap-3 px-1 py-1">
+        <span class="text-slate-400 w-4 shrink-0">${App.icons.repeat(14)}</span>
+        <span class="text-xs text-slate-500 w-14 shrink-0">重复</span>
+        <div class="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+          <select id="d-repeat" ${!hasDue ? 'disabled' : ''} class="text-sm border border-slate-200 rounded px-2 py-1 outline-none focus:border-brand-400 bg-white ${!hasDue ? 'opacity-50' : ''}">
+            ${options.map(o => `<option value="${o.v}" ${o.v === rule ? 'selected' : ''}>${o.l}</option>`).join('')}
+          </select>
+          ${rule && nextLabel ? `<span class="text-[11px] text-slate-400">下次 ${nextLabel}</span>` : ''}
+          ${!hasDue ? '<span class="text-[11px] text-slate-400">需先设截止时间</span>' : ''}
+        </div>
+      </div>
+    `;
   }
 
   function tagsRow(t, state) {
@@ -288,6 +318,12 @@ App.detail = (() => {
     // List
     panel.querySelector('#d-list').addEventListener('change', (e) => {
       App.store.updateTask(t.id, { listId: e.target.value || null });
+    });
+
+    // Repeat
+    panel.querySelector('#d-repeat')?.addEventListener('change', (e) => {
+      const v = e.target.value;
+      App.store.updateTask(t.id, { repeat: v ? { rule: v } : null });
     });
 
     // Subtasks: toggle / edit / delete
