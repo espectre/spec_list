@@ -267,4 +267,8 @@
 
   if (!location.hash) location.hash = '#/schedule';
   render();
+
+  // Start the reminder engine (no-op when permission is not granted).
+  App.reminder?.start?.();
+  App.reminder?.maybePromptOnStart?.();
 })();
