@@ -82,13 +82,32 @@
     els.iconNav.appendChild(reset);
   }
 
+  function currentNotesSub() {
+    const m = location.hash.match(/^#\/notes(?:\/(.+))?$/);
+    const sub = m && m[1];
+    if (!sub) return 'all';
+    if (sub === 'pinned') return 'pinned';
+    if (sub === 'uncat')  return 'uncat';
+    if (sub.startsWith('notebook/')) return 'notebook:' + sub.slice(9);
+    return 'all';
+  }
+
   function renderGroupNav() {
-    // group-nav: shown only on schedule route AND on md+ (never on mobile)
-    if (currentRoute !== 'schedule') {
-      els.groupNav.className = 'hidden flex-col bg-white border-r border-slate-200 shrink-0';
+    // group-nav: shown on schedule and notes routes, md+ only
+    if (currentRoute === 'schedule') {
+      els.groupNav.className = 'hidden md:flex md:w-56 lg:w-64 flex-col bg-white border-r border-slate-200 shrink-0';
+      renderScheduleGroupNav();
       return;
     }
-    els.groupNav.className = 'hidden md:flex md:w-56 lg:w-64 flex-col bg-white border-r border-slate-200 shrink-0';
+    if (currentRoute === 'notes') {
+      els.groupNav.className = 'hidden md:flex md:w-56 lg:w-64 flex-col bg-white border-r border-slate-200 shrink-0';
+      renderNotesGroupNav();
+      return;
+    }
+    els.groupNav.className = 'hidden flex-col bg-white border-r border-slate-200 shrink-0';
+  }
+
+  function renderScheduleGroupNav() {
 
     const state = App.store.get();
     const sub = currentScheduleSub();
@@ -159,6 +178,64 @@
       App.views.schedule?.openNewTagModal?.((tg) => {
         location.hash = '#/schedule/tag/' + tg.id;
       });
+    });
+  }
+
+  function renderNotesGroupNav() {
+    const state = App.store.get();
+    const sub = currentNotesSub();
+    const esc = App.utils.escapeHtml;
+
+    const allCount    = state.notes.length;
+    const pinnedCount = state.notes.filter((n) => n.pinned).length;
+    const uncatCount  = state.notes.filter((n) => !n.notebookId).length;
+
+    const row = (id, leading, label, count, active, href) => `
+      <a href="${href}" data-notes-group="${id}"
+         class="flex items-center gap-3 px-4 py-2.5 mx-2 rounded-lg text-sm transition
+                ${active ? 'bg-brand-50 text-brand-700 font-medium' : 'text-slate-700 hover:bg-slate-50'}">
+        <span class="w-4 inline-flex justify-center ${active ? 'text-brand-600' : 'text-slate-400'}">${leading}</span>
+        <span class="flex-1 truncate">${label}</span>
+        ${count > 0 ? `<span class="text-xs text-slate-400 tabular-nums">${count}</span>` : ''}
+      </a>
+    `;
+
+    const notebookRow = (nb) => {
+      const active = sub === 'notebook:' + nb.id;
+      const count = state.notes.filter((n) => n.notebookId === nb.id).length;
+      return row(
+        'notebook:' + nb.id,
+        `<span class="w-2 h-2 rounded-full inline-block" style="background:${nb.color}"></span>`,
+        esc(nb.name),
+        count,
+        active,
+        '#/notes/notebook/' + nb.id,
+      );
+    };
+
+    els.groupNav.innerHTML = `
+      <div class="px-5 py-4 border-b border-slate-100">
+        <div class="text-base font-semibold text-slate-900">笔记</div>
+      </div>
+      <div class="flex-1 overflow-y-auto py-2">
+        ${row('all',    App.icons.notes(16),  '全部笔记', allCount,    sub === 'all',    '#/notes')}
+        ${row('pinned', App.icons.pin(16),    '置顶',     pinnedCount, sub === 'pinned', '#/notes/pinned')}
+        ${uncatCount > 0
+          ? row('uncat', App.icons.inbox(16), '未分类',   uncatCount,  sub === 'uncat',  '#/notes/uncat')
+          : ''}
+        <div class="mt-3 mb-1 px-5 text-[11px] text-slate-400">我的笔记本</div>
+        ${state.notebooks.length === 0
+          ? '<div class="px-5 py-1.5 text-xs text-slate-300">还没有笔记本</div>'
+          : state.notebooks.map(notebookRow).join('')}
+        <button id="gn-new-notebook" class="w-full mt-2 flex items-center gap-3 px-4 py-2.5 mx-2 rounded-lg text-sm text-slate-500 hover:bg-slate-50 transition">
+          <span class="w-4 inline-flex justify-center text-slate-400">${App.icons.plus(16)}</span>
+          <span class="flex-1 text-left">添加笔记本</span>
+        </button>
+      </div>
+    `;
+
+    els.groupNav.querySelector('#gn-new-notebook')?.addEventListener('click', () => {
+      App.views.notes?.openNewNotebookModal?.();
     });
   }
 

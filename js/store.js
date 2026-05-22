@@ -30,7 +30,8 @@ window.App = window.App || {};
  * SubTask: { id, title, completed, createdAt }
  * List: { id, name, color, order, createdAt }
  * Tag:  { id, name, color, createdAt }
- * Note: { id, title, content, pinned, createdAt, updatedAt }
+ * Notebook: { id, name, color, order, createdAt }
+ * Note: { id, title, content, notebookId (string | null), pinned, createdAt, updatedAt }
  */
 App.store = (() => {
   const KEY = 'shandian.v1';
@@ -47,7 +48,20 @@ App.store = (() => {
       parsed.notes = parsed.notes || [];
       parsed.lists = parsed.lists || [];
       parsed.tags  = parsed.tags  || [];
+      parsed.notebooks = parsed.notebooks || [];
       parsed.meta = parsed.meta || { version: 1 };
+      // Ensure there is at least one default notebook so existing notes have somewhere to live.
+      if (parsed.notebooks.length === 0 && parsed.notes.some((n) => !n.notebookId)) {
+        const defaultNotebook = {
+          id: App.utils.uid(),
+          name: '工作笔记',
+          color: '#6366f1',
+          order: 0,
+          createdAt: new Date().toISOString(),
+        };
+        parsed.notebooks.push(defaultNotebook);
+        parsed.notes.forEach((n) => { if (!n.notebookId) n.notebookId = defaultNotebook.id; });
+      }
       // backfill on tasks loaded from older versions
       parsed.tasks.forEach((t) => {
         if (!('listId' in t)) t.listId = null;
@@ -345,6 +359,56 @@ App.store = (() => {
     emit();
   }
 
+  // ---------- Notebooks ----------
+  function addNotebook(partial = {}) {
+    const now = new Date().toISOString();
+    const nb = {
+      id: App.utils.uid(),
+      name: (partial.name || '').trim() || '新建笔记本',
+      color: partial.color || '#6366f1',
+      order: state.notebooks.length,
+      createdAt: now,
+    };
+    state.notebooks.push(nb);
+    emit();
+    return nb;
+  }
+
+  function updateNotebook(id, patch) {
+    const nb = state.notebooks.find((x) => x.id === id);
+    if (!nb) return null;
+    Object.assign(nb, patch);
+    emit();
+    return nb;
+  }
+
+  function deleteNotebook(id) {
+    const idx = state.notebooks.findIndex((x) => x.id === id);
+    if (idx === -1) return null;
+    const [removed] = state.notebooks.splice(idx, 1);
+    const movedNoteIds = [];
+    state.notes.forEach((n) => {
+      if (n.notebookId === id) {
+        movedNoteIds.push(n.id);
+        n.notebookId = null;
+        n.updatedAt = new Date().toISOString();
+      }
+    });
+    emit();
+    return { notebook: removed, index: idx, movedNoteIds };
+  }
+
+  function restoreNotebook(snapshot) {
+    if (!snapshot || !snapshot.notebook) return;
+    const at = Math.min(snapshot.index, state.notebooks.length);
+    state.notebooks.splice(at, 0, snapshot.notebook);
+    (snapshot.movedNoteIds || []).forEach((nid) => {
+      const n = state.notes.find((x) => x.id === nid);
+      if (n) { n.notebookId = snapshot.notebook.id; n.updatedAt = new Date().toISOString(); }
+    });
+    emit();
+  }
+
   // ---------- Notes ----------
   function addNote(partial = {}) {
     const now = new Date().toISOString();
@@ -352,6 +416,7 @@ App.store = (() => {
       id: App.utils.uid(),
       title: partial.title || '新建笔记',
       content: partial.content || '',
+      notebookId: partial.notebookId || null,
       pinned: false,
       createdAt: now,
       updatedAt: now,
@@ -420,9 +485,14 @@ App.store = (() => {
     const tagPhone   = { id: App.utils.uid(), name: '电话',     color: '#0ea5e9', createdAt: isoIn(-72) };
     const tagWaiting = { id: App.utils.uid(), name: '等回复',   color: '#a855f7', createdAt: isoIn(-72) };
 
+    const nbWork    = { id: App.utils.uid(), name: '工作笔记', color: '#6366f1', order: 0, createdAt: isoIn(-72) };
+    const nbReading = { id: App.utils.uid(), name: '读书笔记', color: '#f59e0b', order: 1, createdAt: isoIn(-72) };
+    const nbMisc    = { id: App.utils.uid(), name: '杂记',     color: '#10b981', order: 2, createdAt: isoIn(-72) };
+
     const data = {
       lists: [work, life, reading],
       tags:  [tagUrgent, tagPhone, tagWaiting],
+      notebooks: [nbWork, nbReading, nbMisc],
       tasks: [
         { id: App.utils.uid(), title: '准备项目周会汇报', detail: '梳理本周进展与下周计划', listId: work.id,    dueAt: todayAt(15, 30),     importance: 1, urgency: 1, reminder: { offsetMinutes: 30 }, subtasks: [
           { id: App.utils.uid(), title: '收集各小组进展',   completed: true,  createdAt: isoIn(-2) },
@@ -442,6 +512,7 @@ App.store = (() => {
           id: App.utils.uid(),
           title: '欢迎使用枫桦清单',
           content: '这是你的第一条笔记。\n\n你可以在这里随手记录想法、会议要点、灵感。\n\n左侧选中笔记，右侧编辑，自动保存。',
+          notebookId: nbWork.id,
           pinned: true,
           createdAt: isoIn(-48),
           updatedAt: isoIn(-1),
@@ -450,9 +521,28 @@ App.store = (() => {
           id: App.utils.uid(),
           title: '本周复盘',
           content: '做得好的：\n- 完成了 OKR 初稿\n- 健身 3 次\n\n可以改进：\n- 早睡\n- 减少切换上下文',
+          notebookId: nbWork.id,
           pinned: false,
           createdAt: isoIn(-24),
           updatedAt: isoIn(-2),
+        },
+        {
+          id: App.utils.uid(),
+          title: '《深度工作》读书笔记',
+          content: '核心观点：\n- 深度工作 vs 浮浅工作\n- 屏蔽干扰、固定时段\n- 长时间专注比频繁切换更高效\n\n可执行：\n- 每天上午 9-11 留作深度时段\n- 关掉消息提示',
+          notebookId: nbReading.id,
+          pinned: false,
+          createdAt: isoIn(-36),
+          updatedAt: isoIn(-5),
+        },
+        {
+          id: App.utils.uid(),
+          title: '周末做饭尝试',
+          content: '番茄牛腩 / 蒜蓉西兰花 / 紫菜蛋花汤\n\n下次记得提前一晚把牛腩腌好',
+          notebookId: nbMisc.id,
+          pinned: false,
+          createdAt: isoIn(-12),
+          updatedAt: isoIn(-3),
         },
       ],
       meta: { version: 1, seededAt: now.toISOString() },
@@ -491,6 +581,10 @@ App.store = (() => {
     restoreTag,
     setTaskTags,
     nextOccurrence,
+    addNotebook,
+    updateNotebook,
+    deleteNotebook,
+    restoreNotebook,
     addNote,
     updateNote,
     deleteNote,
