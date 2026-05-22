@@ -5,6 +5,31 @@ window.App = window.App || {};
 // "openTask: 'first'" means: navigate to schedule, pick first task, open its detail panel.
 App.CHANGELOG = [
   {
+    id: 'notebooks-2026-05-22',
+    date: '2026-05-22',
+    title: '笔记本（笔记分组）',
+    summary: '笔记终于有层级了。给笔记按"工作笔记/读书笔记/杂记…"分组，左侧栏直接切换，每个笔记本带颜色。笔记可以在编辑器顶部下拉直接挪窝。',
+    highlights: [
+      { label: '笔记本侧栏', route: '#/notes', selector: '#group-nav [data-notes-group^="notebook:"]' },
+      { label: '编辑器笔记本下拉', route: '#/notes', selectorFn: () => {
+          const state = App.store.get();
+          const list = state.notes.slice().sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+          const first = list[0];
+          if (!first) return null;
+          App.views.notes.setScope?.('all');
+          // we need to click into a note so editor renders; call list-render path:
+          return document.querySelector('#n-notebook') || (() => {
+            // pick the first list button and trigger
+            const btn = document.querySelector('[data-note-id]');
+            btn?.click();
+            return document.querySelector('#n-notebook');
+          })();
+        }
+      },
+      { label: '新建笔记本按钮', route: '#/notes', selector: '#gn-new-notebook' },
+    ],
+  },
+  {
     id: 'reminder-2026-05-22',
     date: '2026-05-22',
     title: '任务提醒（浏览器通知）',
