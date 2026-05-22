@@ -20,7 +20,9 @@ window.App = window.App || {};
  *   dueAt (ISO string | null),
  *   importance (0|1), urgency (0|1),   // 1 = high
  *   subtasks: SubTask[],
+ *   repeat: null | { rule: 'daily'|'weekly'|'monthly'|'yearly' },
  *   completed, completedAt,
+ *   lastCompletedAt: ISO | null,       // last time the recurring task was advanced
  *   createdAt, updatedAt,
  * }
  * SubTask: { id, title, completed, createdAt }
@@ -49,6 +51,8 @@ App.store = (() => {
         if (!('listId' in t)) t.listId = null;
         if (!Array.isArray(t.subtasks)) t.subtasks = [];
         if (!Array.isArray(t.tagIds)) t.tagIds = [];
+        if (!('repeat' in t)) t.repeat = null;
+        if (!('lastCompletedAt' in t)) t.lastCompletedAt = null;
       });
       return parsed;
     } catch (e) {
@@ -94,8 +98,10 @@ App.store = (() => {
       urgency: partial.urgency ? 1 : 0,
       tagIds: Array.isArray(partial.tagIds) ? partial.tagIds.slice() : [],
       subtasks: [],
+      repeat: partial.repeat || null,
       completed: false,
       completedAt: null,
+      lastCompletedAt: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -112,12 +118,40 @@ App.store = (() => {
     return t;
   }
 
+  function nextOccurrence(dueAt, rule) {
+    if (!dueAt || !rule) return null;
+    const d = new Date(dueAt);
+    switch (rule) {
+      case 'daily':   d.setDate(d.getDate() + 1); break;
+      case 'weekly':  d.setDate(d.getDate() + 7); break;
+      case 'monthly': d.setMonth(d.getMonth() + 1); break;
+      case 'yearly':  d.setFullYear(d.getFullYear() + 1); break;
+      default: return null;
+    }
+    return d.toISOString();
+  }
+
   function toggleTask(id) {
     const t = state.tasks.find((x) => x.id === id);
     if (!t) return;
+    const now = new Date().toISOString();
+    // Recurring task: when user "completes" it, advance to next occurrence instead.
+    if (!t.completed && t.repeat && t.repeat.rule && t.dueAt) {
+      const next = nextOccurrence(t.dueAt, t.repeat.rule);
+      if (next) {
+        t.dueAt = next;
+        t.lastCompletedAt = now;
+        // reset subtask completion for the next occurrence
+        if (Array.isArray(t.subtasks)) t.subtasks.forEach((s) => { s.completed = false; });
+        t.updatedAt = now;
+        emit();
+        return;
+      }
+    }
+    // Normal toggle
     t.completed = !t.completed;
-    t.completedAt = t.completed ? new Date().toISOString() : null;
-    t.updatedAt = new Date().toISOString();
+    t.completedAt = t.completed ? now : null;
+    t.updatedAt = now;
     emit();
   }
 
@@ -390,6 +424,8 @@ App.store = (() => {
         { id: App.utils.uid(), title: '回复客户邮件',     detail: '',                     listId: work.id,    tagIds: [tagUrgent.id, tagWaiting.id], dueAt: todayAt(11, 0),      importance: 0, urgency: 1, completed: false, completedAt: null,       createdAt: isoIn(-3),  updatedAt: isoIn(-3) },
         { id: App.utils.uid(), title: '阅读《深度工作》第三章', detail: '记录三条要点',    listId: reading.id, dueAt: dayOffset(2, 21),    importance: 1, urgency: 0, completed: false, completedAt: null,       createdAt: isoIn(-5),  updatedAt: isoIn(-5) },
         { id: App.utils.uid(), title: '清理桌面文件',     detail: '',                     listId: null,       dueAt: null,                importance: 0, urgency: 0, completed: false, completedAt: null,       createdAt: isoIn(-10), updatedAt: isoIn(-10) },
+        { id: App.utils.uid(), title: '每日站会',         detail: '5 分钟同步昨日完成、今日重点、阻塞', listId: work.id, dueAt: todayAt(9, 30), importance: 0, urgency: 1, repeat: { rule: 'daily' },  completed: false, completedAt: null, createdAt: isoIn(-40), updatedAt: isoIn(-1) },
+        { id: App.utils.uid(), title: '周报',             detail: '汇总本周进展和下周计划',           listId: work.id, dueAt: todayAt(17, 0), importance: 1, urgency: 0, repeat: { rule: 'weekly' }, completed: false, completedAt: null, createdAt: isoIn(-60), updatedAt: isoIn(-2) },
         { id: App.utils.uid(), title: '体检预约',         detail: '上午空腹',              listId: life.id,    tagIds: [tagPhone.id], dueAt: dayOffset(5, 8, 30), importance: 1, urgency: 0, completed: false, completedAt: null,       createdAt: isoIn(-12), updatedAt: isoIn(-12) },
         { id: App.utils.uid(), title: '提交月度报销',     detail: '',                     listId: work.id,    dueAt: dayOffset(-1, 18),   importance: 0, urgency: 1, completed: true,  completedAt: isoIn(-20), createdAt: isoIn(-30), updatedAt: isoIn(-20) },
       ],
@@ -446,6 +482,7 @@ App.store = (() => {
     deleteTag,
     restoreTag,
     setTaskTags,
+    nextOccurrence,
     addNote,
     updateNote,
     deleteNote,

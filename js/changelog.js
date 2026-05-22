@@ -5,6 +5,16 @@ window.App = window.App || {};
 // "openTask: 'first'" means: navigate to schedule, pick first task, open its detail panel.
 App.CHANGELOG = [
   {
+    id: 'repeat-2026-05-22',
+    date: '2026-05-22',
+    title: '重复任务',
+    summary: '任务可设每天/每周/每月/每年循环。完成时不会消失，自动推进到下个截止日，子任务也会重置。',
+    highlights: [
+      { label: '行内重复图标', route: '#/schedule', selectorFn: () => document.querySelector('[data-task-id] svg[viewBox="0 0 24 24"] polyline[points="17 1 21 5 17 9"]')?.closest('[data-task-id]') },
+      { label: '详情面板重复', route: '#/schedule', openTask: 'recurring', selector: '#d-repeat' },
+    ],
+  },
+  {
     id: 'tags-2026-05-21',
     date: '2026-05-21',
     title: '标签系统',
@@ -109,6 +119,10 @@ App.changelog = (() => {
       if (h.openTask === 'first') {
         const state = App.store.get();
         const t = state.tasks.find((x) => !x.completed);
+        if (t) App.detail.open(t.id);
+      } else if (h.openTask === 'recurring') {
+        const state = App.store.get();
+        const t = state.tasks.find((x) => !x.completed && x.repeat && x.repeat.rule);
         if (t) App.detail.open(t.id);
       }
       setTimeout(() => doHighlight(h), 60);
