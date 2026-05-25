@@ -3,6 +3,8 @@
 > 一个**已冻结**的个人清单 + 笔记 Web App。  
 > 公开演示：<https://espectre.github.io/spec_list/>
 
+![应用截图](docs/screenshot.png)
+
 ## 项目状态：FROZEN（2026-05-25）
 
 为什么冻结：评估后认为投入 1.5-2 天接 Supabase 做跨端同步，性价比不如直接用 [滴答清单](https://www.dida365.com/) / [思源笔记](https://b3log.org/siyuan/) / [Notion](https://www.notion.so/) 这类成熟商业 App。本项目作为**完整可读的工程练习样本**保留，将来想加某个特定工作流再回来。
